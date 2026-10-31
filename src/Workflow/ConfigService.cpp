@@ -74,7 +74,11 @@ void ConfigService::RegisterProperties(IConfig *config) {
     m_AutoRestart = config->GetProperty("TAS", "AutoRestart");
     m_AutoRestart->SetComment("Keep a record or level script armed after its playback ends, however it ends, "
                               "so it plays again the next time a level loads.");
+    #ifdef __EMSCRIPTEN__
+    m_AutoRestart->SetDefaultBoolean(false);
+#else
     m_AutoRestart->SetDefaultBoolean(true);
+#endif
 
     m_PreserveLevelHistory = config->GetProperty("TAS", "PreserveLevelHistory");
     m_PreserveLevelHistory->SetComment(

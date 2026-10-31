@@ -3,9 +3,12 @@
 #include "RecordFileIO.h"
 #include <cmath>
 #include <emscripten.h>
+#include <emscripten/heap.h>
+#include <malloc.h>
 namespace {
 std::vector<RecordFrameData> webRecord, webUndo;
 std::string webRecordError;
+bool webEditing = false;
 bool WebRecordMenuReady() {
     auto *engine = g_Mod ? g_Mod->GetEngine() : nullptr;
     if (!engine || !engine->IsIdle() || engine->GetGameInterface()->IsIngame()) {
@@ -43,6 +46,7 @@ EMSCRIPTEN_KEEPALIVE int BML_WebTASLoad(const char *path) {
         }
         webRecord = std::move(frames);
         webUndo.clear();
+        webEditing = false;
         webRecordError.clear();
         return static_cast<int>(webRecord.size());
     } catch (const std::exception &e) {
@@ -66,6 +70,7 @@ EMSCRIPTEN_KEEPALIVE int BML_WebTASSetRange(int first, int last, int keys, doubl
         webRecordError = "采样范围、按键或时间无效。";
         return 0;
     }
+    webEditing = false;
     webUndo = webRecord;
     for (int i = first; i <= last; ++i) {
         webRecord[i].keyStates = (webRecord[i].keyStates & ~tas::record::kRecordKeyMask) | keys;
@@ -74,9 +79,58 @@ EMSCRIPTEN_KEEPALIVE int BML_WebTASSetRange(int first, int last, int keys, doubl
     }
     return 1;
 }
+// A pointer gesture is one undo unit, not a full-record copy per painted cell.
+EMSCRIPTEN_KEEPALIVE int BML_WebTASBeginEdit() {
+    if (!WebRecordMenuReady() || webRecord.empty() || webEditing) return 0;
+    webUndo = webRecord;
+    webEditing = true;
+    return 1;
+}
+EMSCRIPTEN_KEEPALIVE int BML_WebTASSetBitRange(int first, int last, int bit, int down) {
+    if (!WebRecordMenuReady() || !webEditing || first < 0 || last < first ||
+        size_t(last) >= webRecord.size() || bit < 0 || bit > 8 || (down != 0 && down != 1)) {
+        webRecordError = "采样范围或按键无效。";
+        return 0;
+    }
+    for (int i = first; i <= last; ++i) {
+        const int mask = 1 << bit;
+        webRecord[i].keyStates = (webRecord[i].keyStates & ~mask) | (down ? mask : 0);
+    }
+    return 1;
+}
+EMSCRIPTEN_KEEPALIVE int BML_WebTASEndEdit() { webEditing = false; return 1; }
+EMSCRIPTEN_KEEPALIVE const char *BML_WebTASStatus() {
+    static char status[256];
+    auto *engine = g_Mod ? g_Mod->GetEngine() : nullptr;
+    bool precise = false;
+    const bool known = PhysicsRuntimeGetSolverMode(precise);
+    auto *playback = engine ? engine->GetServiceProvider().Resolve<PlaybackService>() : nullptr;
+    auto *record = engine ? engine->GetServiceProvider().Resolve<RecordPlayer>() : nullptr;
+    const bool pending = engine && engine->IsPendingPlay();
+    const bool playing = playback && playback->IsPlaying();
+    const char *state = pending ? "pending" : playing ? (playback->IsPaused() ? "paused" : "playing") :
+        engine && engine->IsRecording() ? "recording" : engine && engine->IsTranslating() ? "translating" : "idle";
+    const bool editable = engine && engine->IsIdle() && !engine->GetGameInterface()->IsIngame();
+    std::snprintf(status, sizeof(status),
+        "{\"solver\":%d,\"state\":\"%s\",\"frame\":%zu,\"total\":%zu,\"canStop\":%s,\"editable\":%s}",
+        known ? (precise ? 1 : 0) : -1, state,
+        playing && record ? record->GetCurrentFrame() : size_t(0),
+        (playing || pending) && record ? record->GetTotalFrames() : size_t(0),
+        playing || pending ? "true" : "false", editable ? "true" : "false");
+    return status;
+}
+EMSCRIPTEN_KEEPALIVE int BML_WebTASStop() {
+    auto *engine = g_Mod ? g_Mod->GetEngine() : nullptr;
+    if (!engine || engine->IsShuttingDown()) return 0;
+    // Clearing the project also cancels a pending replay, without a synthetic
+    // key event that could leak into the recorded/game input sequence.
+    engine->StopReplay(true);
+    return 1;
+}
 EMSCRIPTEN_KEEPALIVE int BML_WebTASUndo() {
     if (!WebRecordMenuReady() || webUndo.empty())
         return 0;
+    webEditing = false;
     webRecord.swap(webUndo);
     webUndo.clear();
     return 1;
@@ -117,6 +171,7 @@ EMSCRIPTEN_KEEPALIVE int BML_WebTASPlay(const char *path, int level) {
         auto *project = projects ? projects->ResolveLaunchTarget(path, webRecordError) : nullptr;
         if (!project || !project->IsValid() || !project->IsRecordProject())
             return 0;
+        engine->SetAutoRestartEnabled(false);
         projects->SetCurrentProject(project);
         if (!engine->StartReplay()) {
             webRecordError = "无法准备录像。";
@@ -156,10 +211,44 @@ extern "C" EMSCRIPTEN_KEEPALIVE int BML_WebRequestCheckpoint(int action) {
     return 1;
 }
 extern "C" EMSCRIPTEN_KEEPALIVE int BML_WebCheckpointResult() { return webCheckpointResult; }
+namespace {
+// Allocator live bytes, not the Wasm memory reservation/high-water mark. Measure
+// at the checkpoint boundary, with no simulation/render frame between samples.
+struct WebCheckpointMeasurement {
+    int action = 0;
+    size_t beforeUsed = 0, afterUsed = 0, beforeHeap = 0, afterHeap = 0;
+    double milliseconds = 0;
+} webCheckpointMeasurement;
+struct WebCheckpointProbe {
+    double started = emscripten_get_now();
+    explicit WebCheckpointProbe(int action) {
+        webCheckpointMeasurement = {};
+        webCheckpointMeasurement.action = action;
+        webCheckpointMeasurement.beforeUsed = static_cast<unsigned>(mallinfo().uordblks);
+        webCheckpointMeasurement.beforeHeap = emscripten_get_heap_size();
+    }
+    ~WebCheckpointProbe() {
+        webCheckpointMeasurement.milliseconds = emscripten_get_now() - started;
+        webCheckpointMeasurement.afterUsed = static_cast<unsigned>(mallinfo().uordblks);
+        webCheckpointMeasurement.afterHeap = emscripten_get_heap_size();
+    }
+};
+}
+extern "C" EMSCRIPTEN_KEEPALIVE const char *BML_WebCheckpointStats() {
+    static char json[384];
+    const auto &m = webCheckpointMeasurement;
+    std::snprintf(json, sizeof(json),
+        "{\"action\":%d,\"result\":%d,\"tick\":%zu,\"beforeUsed\":%zu,\"afterUsed\":%zu,"
+        "\"beforeHeap\":%zu,\"afterHeap\":%zu,\"milliseconds\":%.3f}",
+        m.action, webCheckpointResult, webCheckpointTick, m.beforeUsed, m.afterUsed,
+        m.beforeHeap, m.afterHeap, m.milliseconds);
+    return json;
+}
 static void RunWebCheckpointRequest(BallanceTAS *mod) {
     if (!webCheckpointRequest)
         return;
     const int action = webCheckpointRequest;
+    WebCheckpointProbe measurement(action);
     webCheckpointRequest = 0;
     webCheckpointResult = -1;
     auto *engine = mod->GetEngine();
