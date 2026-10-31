@@ -1,7 +1,7 @@
 #ifndef BML_PHYSICS_RT_H
 #define BML_PHYSICS_RT_H
 
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
 
 // Native builds consume the real physics ABI.  The remainder of this file is
 // the verified 32-bit Windows layout and must never be used on arm64.

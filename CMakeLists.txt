@@ -60,6 +60,15 @@ set(TAS_SOURCE_DIR "${PROJECT_SOURCE_DIR}/src" CACHE INTERNAL "")
 # ---------------------------------------------------------------------------
 #  Build options
 # ---------------------------------------------------------------------------
+option(TAS_BUILD_STATIC "Link TAS into a source-integrated host" OFF)
+if(TAS_BUILD_STATIC)
+    add_compile_definitions(TAS_STATIC_HOST=1)
+endif()
+option(TAS_SOURCE_ENGINE "Use the reconstructed engine runtime API" ${APPLE})
+if(TAS_SOURCE_ENGINE)
+    add_compile_definitions(TAS_SOURCE_ENGINE=1)
+endif()
+
 option(BUILD_MOD    "Build the full BallanceTAS mod (requires VirtoolsSDK & BML)" ON)
 option(BUILD_TESTS  "Build unit tests" ON)
 option(TAS_ENABLE_LEGACY_MENU
@@ -78,7 +87,9 @@ endif()
 #  SDK dependencies — only required when building the full mod
 # ---------------------------------------------------------------------------
 if(BUILD_MOD)
-    if(APPLE AND TAS_BALLANCED_ROOT AND TAS_BML_ROOT)
+    if(TAS_BUILD_STATIC AND TARGET BML AND TARGET CK2 AND TARGET VxMath)
+        # The containing Ballanced build supplies the exact engine ABI.
+    elseif(APPLE AND TAS_BALLANCED_ROOT AND TAS_BML_ROOT)
         # Native SDK headers and libraries must describe the same runtime.
         # Permit a staged/candidate SDK without replacing the checkouts' shared
         # build outputs (or silently linking an older library against new headers).

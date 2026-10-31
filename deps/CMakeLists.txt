@@ -16,12 +16,21 @@ if(WIN32)
 endif()
 
 # zip
-add_subdirectory(zip EXCLUDE_FROM_ALL)
+if(NOT TARGET zip)
+    add_subdirectory(zip EXCLUDE_FROM_ALL)
+endif()
 
 # fmt
 add_subdirectory(fmt EXCLUDE_FROM_ALL)
+if(EMSCRIPTEN)
+    # fmt 11.2 relies on transitive malloc/free declarations removed by the
+    # newer libc++ shipped with emsdk 6. Keep this dependency fix localized.
+    target_compile_options(fmt PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdlib>")
+endif()
 
 # yyjson
-add_subdirectory(yyjson EXCLUDE_FROM_ALL)
+if(NOT TARGET yyjson)
+    add_subdirectory(yyjson EXCLUDE_FROM_ALL)
+endif()
 
 endif() # BUILD_MOD

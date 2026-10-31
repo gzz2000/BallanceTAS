@@ -2,7 +2,7 @@
 
 #ifdef _WIN32
 #include <Windows.h>
-#else
+#elif defined(__APPLE__)
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <cstring>
@@ -19,7 +19,7 @@
 static void SetChoiceEditor(IProperty *property, const std::vector<std::string> &choices) {
     using SetChoicesFn = int(__cdecl *)(IProperty *, const char *const[], size_t);
     using SetEditorFn = int(__cdecl *)(IProperty *, int);
-    constexpr int kChoiceEditor = 2; // BML_CONFIG_EDITOR_CHOICE
+    constexpr auto kChoiceEditor = BML_CONFIG_EDITOR_CHOICE;
 
     if (!property) {
         return;
@@ -29,6 +29,9 @@ static void SetChoiceEditor(IProperty *property, const std::vector<std::string> 
     if (!loader) return;
     auto setChoices = reinterpret_cast<SetChoicesFn>(::GetProcAddress(loader, "BML_SetConfigPropertyChoices"));
     auto setEditor = reinterpret_cast<SetEditorFn>(::GetProcAddress(loader, "BML_SetConfigPropertyEditor"));
+#elif defined(TAS_STATIC_HOST)
+    auto setChoices = &BML_SetConfigPropertyChoices;
+    auto setEditor = &BML_SetConfigPropertyEditor;
 #else
     SetChoicesFn setChoices = nullptr;
     SetEditorFn setEditor = nullptr;

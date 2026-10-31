@@ -73,7 +73,7 @@ public:
                        int concaveCnt, CKMesh **concaveMesh) override;
     void OnUnphysicalize(CK3dEntity *target) override;
     std::string GetLegacyPreloadError() const {
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
         return m_LegacyPreload.Error();
 #else
         return {};

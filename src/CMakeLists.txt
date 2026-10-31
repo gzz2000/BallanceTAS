@@ -94,6 +94,12 @@ target_link_libraries(tas_game
         $<$<PLATFORM_ID:Windows>:minhook>
         $<$<PLATFORM_ID:Darwin>:physics_RT>
 )
+if(TAS_BUILD_STATIC)
+    target_link_libraries(tas_game PUBLIC physics_RTStatic)
+    target_include_directories(tas_game PUBLIC
+        "${TAS_BALLANCED_ROOT}/Source/BuildingBlocks/physics_RT"
+        "${CMAKE_BINARY_DIR}/Source/BuildingBlocks/physics_RT/ivp/include/ivp")
+endif()
 set_target_properties(tas_game PROPERTIES FOLDER "TAS/Modules")
 
 # ── Module: scripting ────────────────────────────────────────────────────────
@@ -226,7 +232,11 @@ set_target_properties(tas_ui PROPERTIES FOLDER "TAS/Modules")
 # ── Final shared library (.bmodp) ────────────────────────────────────────────
 #    BML mod entry point – assembles all modules into the loadable plugin DLL.
 # ─────────────────────────────────────────────────────────────────────────────
-add_library(BallanceTAS SHARED
+set(_tas_library_type SHARED)
+if(TAS_BUILD_STATIC)
+    set(_tas_library_type STATIC)
+endif()
+add_library(BallanceTAS ${_tas_library_type}
         BMLLogSink.h
         BallanceTAS.h               BallanceTAS.cpp
 )
@@ -251,7 +261,11 @@ target_compile_options(BallanceTAS PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/Zc:char8_t->
 )
 
-set_target_properties(BallanceTAS PROPERTIES SUFFIX ".bmodp")
+if(TAS_BUILD_STATIC)
+    target_compile_definitions(BallanceTAS PRIVATE BMLEntry=TAS_Static_Entry BMLExit=TAS_Static_Exit)
+else()
+    set_target_properties(BallanceTAS PROPERTIES SUFFIX ".bmodp")
+endif()
 if(APPLE)
     # Diagnostic-only native rasterizer API; absent from normal mod builds.
     set(TAS_PIXEL_TRACE_INCLUDE_DIR "" CACHE PATH "Native CKRasterizer headers for optional pixel diagnostics")

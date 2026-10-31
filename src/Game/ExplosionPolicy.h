@@ -3,7 +3,7 @@
 #include <BML/BMLAll.h>
 #include <cstring>
 #include <vector>
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
 #include "CKObjectLifetime.h"
 #endif
 
@@ -15,17 +15,17 @@ class ExplosionPolicy {
     struct Object {
         CK_ID id = 0;
         CKObject *pointer = nullptr;
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
         std::uint64_t token = 0;
 #endif
         explicit Object(CKObject *p) : id(p ? p->GetID() : 0), pointer(p) {
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
             if (p) token = CKGetObjectLifetimeToken(p->GetCKContext(), id);
 #endif
         }
         bool Live(CKContext *context) const {
             return pointer && context->GetObject(id) == pointer
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
                 && token && CKGetObjectLifetimeToken(context, id) == token
 #endif
                 ;

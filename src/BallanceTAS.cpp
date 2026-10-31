@@ -8,9 +8,11 @@
 #include <limits>
 #include <vector>
 
+#ifdef TAS_SOURCE_ENGINE
 #ifdef __APPLE__
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#endif
 #include <PhysicsRuntimeApi.h>
 #endif
 
@@ -56,7 +58,7 @@ static PixelStateTrace g_PixelStateTrace;
 // and ordinary 132-sample score lockstep. Keep retail clock semantics for the
 // whole TAS level, including its score-conversion animation after playback.
 static bool SetRecordedToolboxClock(IBML *bml, bool enabled) {
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
     using SetClock = int (*)(CKContext *, CKBOOL);
     // Engine plugins can be RTLD_LOCAL. Resolve through the owning plugin,
     // rather than assuming its API is present in the process-global scope.
@@ -99,10 +101,11 @@ bool ForceNativePhysicsForOracle() {
     return value && value[0] == '1' && value[1] == '\0';
 }
 
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
 using PracticeAction = int (*)();
 
 PracticeAction ResolvePracticeAction(const char *symbol) {
+#ifdef __APPLE__
     for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
         const char *image = _dyld_get_image_name(i);
         if (!image || !std::strstr(image, "PracticeTools.bmodp"))
@@ -113,6 +116,9 @@ PracticeAction ResolvePracticeAction(const char *symbol) {
             if (action) return action;
         }
     }
+#else
+    (void)symbol; // Practice provider integration follows playback qualification.
+#endif
     return nullptr;
 }
 #endif
@@ -250,7 +256,7 @@ void RunTasStateTrace(BallanceTAS *mod) {
                 if (haveNear) {
                     VxVector position{};
                     PhysicsObject *candidatePhysics = game->GetPhysicsObject(candidate);
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
                     IVP_Core *candidateCore = candidatePhysics && candidatePhysics->m_RealObject
                         ? candidatePhysics->m_RealObject->get_core() : nullptr;
                     if (candidateCore) {
@@ -285,7 +291,7 @@ void RunTasStateTrace(BallanceTAS *mod) {
             if (best) tracedObject = best;
         }
     }
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
     CK3dEntity *secondaryObject = tracedObject;
 #endif
     // Diagnostic control: keep the named-selector work identical while changing
@@ -318,7 +324,7 @@ void RunTasStateTrace(BallanceTAS *mod) {
                 if (keys[watched[i]]) record.keyBits |= (1u << i);
         }
     }
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
     if (auto *manager = game ? game->GetIpionManager() : nullptr) {
         record.physicsAverageTickMs = manager->GetDeltaTime();
         if (manager->GetEnvironment()) {
@@ -515,7 +521,7 @@ void RunTasStateTrace(BallanceTAS *mod) {
     }
 }
 
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
 void RunSnapshotSequenceAudit(BallanceTAS *mod) {
     struct Action { char kind; size_t tick; };
     struct Identity { CK_ID id; CKObject *pointer; CK_CLASSID cid; std::string name; };
@@ -940,7 +946,7 @@ void RemoveTasEntryCommands(IBML *bml) {
 }
 }
 
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
 // Optional inter-mod contract: physical-key reconciliation must not overwrite
 // the input stream owned by replay/editing. Query rather than cache ownership,
 // since playback can stop, pause, restart or unload within the same level.
@@ -1150,7 +1156,7 @@ void BallanceTAS::OnPhysicalize(CK3dEntity *target, CKBOOL fixed, float, float, 
                                const char *, CKBOOL frozen, CKBOOL collision, CKBOOL,
                                float linearDamp, float rotDamp, const char *, VxVector,
                                int, CKMesh **, int, VxVector *, float *, int, CKMesh **) {
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
     if (target) m_LegacyPreload.Register(target->GetID(), target, target->GetName());
 #endif
     if (!std::getenv("BALLANCE_TAS_PHYSICALIZE_ORDER") || !target) return;
@@ -1161,7 +1167,7 @@ void BallanceTAS::OnPhysicalize(CK3dEntity *target, CKBOOL fixed, float, float, 
 }
 
 void BallanceTAS::OnUnphysicalize(CK3dEntity *target) {
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
     if (target) m_LegacyPreload.Retire(target->GetID(), target,
         [this](const std::vector<LegacyPreloadSession::Owner> &captured) -> std::string {
             using Complete = decltype(&TT_PhysicsCompleteFreefallPreloadV1);
@@ -1198,7 +1204,7 @@ void BallanceTAS::OnUnphysicalize(CK3dEntity *target) {
         GetLogger()->Info("PHYS_ORDER remove tick=%u id=%u name=%s",
             static_cast<unsigned>(GetBML()->GetTimeManager()->GetMainTickCount()),
             static_cast<unsigned>(target->GetID()), target->GetName() ? target->GetName() : "<null>");
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
     const char *enabled = std::getenv("BALLANCE_TAS_LIFECYCLE_TRACE");
     if (!enabled || enabled[0] != '1' || !target || !target->GetName()
         || std::strncmp(target->GetName(), "P_Box_MF", 8) != 0) return;
@@ -1357,7 +1363,7 @@ bool BallanceTAS::Initialize() {
 
         // Initialize TAS Engine
         m_Engine = std::make_unique<TASEngine>(m_GameInterface.get(), m_EventBus.get(), m_HookManager.get());
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
         // Native Ballanced keeps writable loader data below its --user-data-path.
         // The historical relative path contains Windows separators and would create
         // a literally named "..\\ModLoader\\TAS\\" directory on POSIX.
@@ -1616,7 +1622,7 @@ void BallanceTAS::OnProcess() {
         if (m_PlayerHostBridge) {
             m_PlayerHostBridge->Tick();
         }
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
         RunSnapshotSequenceAudit(this);
         RunSnapshotTasAudit(this);
         RunReplayTasAudit(this);
@@ -1705,7 +1711,7 @@ void BallanceTAS::SkipRenderingForTicks(size_t ticks) {
 // --- Event Forwarding Implementations ---
 
 void BallanceTAS::OnPreStartMenu() {
-#if defined(__APPLE__)
+#if defined(TAS_SOURCE_ENGINE)
     m_LegacyPreload.FinishMenu();
     const auto error = m_LegacyPreload.Error();
     if (!error.empty()) GetLogger()->Error("%s", error.c_str());

@@ -114,7 +114,7 @@ void GameInterface::ResetPhysicsTime() {
 
 void GameInterface::ResetPhysicsTime(float deltaTimeMs) {
     // Reset physics time in order to sync with TAS records
-#if !defined(__APPLE__)
+#if !defined(TAS_SOURCE_ENGINE)
     if (PhysicsRuntimeBridgeActive() && m_TimeManager) {
         // The retail SDK header has no recovered Player-only fixed-clock
         // accessors.  The semantic physics trace records the effective delta
@@ -123,7 +123,7 @@ void GameInterface::ResetPhysicsTime(float deltaTimeMs) {
                   m_TimeManager->GetLastDeltaTime());
     }
 #endif
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
     m_IpionManager->ResetSimulationClock();
 #else
     if (PhysicsRuntimeBridgeActive()) {
@@ -161,7 +161,7 @@ void GameInterface::ResetPhysicsTime(float deltaTimeMs) {
     if (m_TimeManager) {
         m_TimeManager->SetLastDeltaTime(deltaTimeMs);
     }
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
     // A canonical TAS reset starts with the record's fixed sample, including
     // its smoothing history. Blending with the menu delta leaves a permanent
     // clock phase error when a 132/240 Hz record follows the 264 Hz menu.
@@ -174,7 +174,7 @@ void GameInterface::ResetPhysicsTime(float deltaTimeMs) {
 }
 
 void GameInterface::SetHostPhysicsTimeScale(float scale) {
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
     if (m_TimeManager) {
         m_TimeManager->SetFixedPhysicsTimeScale(scale);
     }
@@ -185,7 +185,7 @@ void GameInterface::SetHostPhysicsTimeScale(float scale) {
 
 PhysicsDeterminism::PhysicsLevelBaseline GameInterface::CapturePhysicsLevelBaseline() const {
     PhysicsDeterminism::PhysicsLevelBaseline baseline;
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
     baseline.timeFactor = m_IpionManager->GetPhysicsTimeFactor();
     baseline.nextMovementCheck = m_IpionManager->GetNextMovementCheck();
 #else
@@ -282,7 +282,7 @@ void GameInterface::TurnOffNavigation(bool ballNav, bool camNav) {
 }
 
 void GameInterface::RestorePhysicsLevelBaseline(const PhysicsDeterminism::PhysicsLevelBaseline &baseline) {
-#if !defined(__APPLE__)
+#if !defined(TAS_SOURCE_ENGINE)
     if (PhysicsRuntimeBridgeActive()) {
         const PhysicsRuntimeLevelBaseline runtime{
             baseline.timeFactor, baseline.nextMovementCheck, 0, baseline.randomSeed};
@@ -291,7 +291,7 @@ void GameInterface::RestorePhysicsLevelBaseline(const PhysicsDeterminism::Physic
     }
 #endif
     m_IpionManager->SetPhysicsTimeFactor(baseline.timeFactor);
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
     m_IpionManager->SetNextMovementCheck(baseline.nextMovementCheck);
 #else
     if (auto *env = m_IpionManager->GetEnvironment())
@@ -302,7 +302,7 @@ void GameInterface::RestorePhysicsLevelBaseline(const PhysicsDeterminism::Physic
 
 void GameInterface::SetPhysicsTimeFactor(float factor) {
     // Reset physics time factor in case it was changed
-#if !defined(__APPLE__)
+#if !defined(TAS_SOURCE_ENGINE)
     if (PhysicsRuntimeBridgeActive()) {
         PhysicsRuntimeSetTimeFactor(m_IpionManager, factor * 0.001f);
         return;
@@ -389,7 +389,7 @@ PhysicsObject *GameInterface::GetPhysicsObject(CK3dEntity *entity) const {
     static bool timingLogged = false;
     if (object && !timingLogged) {
         timingLogged = true;
-#ifdef __APPLE__
+#ifdef TAS_SOURCE_ENGINE
         Log::Info("Physics timing at first TAS object: factor %.9g, delta %.9g ms, "
                   "submitted %.9g s, PSI %.9g s, simulation %.12g s.",
                   m_IpionManager->GetPhysicsTimeFactor(), m_IpionManager->GetDeltaTime(),
@@ -463,7 +463,7 @@ bool GameInterface::IsSleeping(CK3dEntity *obj) const {
     PhysicsObject *ipionObj = m_IpionManager->GetPhysicsObject(obj);
     if (!ipionObj) return false;
 
-#if !defined(__APPLE__)
+#if !defined(TAS_SOURCE_ENGINE)
     if (PhysicsRuntimeBridgeActive()) {
         bool sleeping = false;
         return PhysicsRuntimeGetObjectState(
@@ -1064,7 +1064,7 @@ void GameInterface::OnCloseMenu() {
     m_BML->AddTimerLoop(static_cast<CKDWORD>(1), [this] {
         if (m_InputManager->IsKeyDown(CKKEY_ESCAPE) || m_InputManager->IsKeyDown(CKKEY_RETURN))
             return true;
-#ifndef __APPLE__
+#ifndef TAS_SOURCE_ENGINE
         // The retail CKInputManager has no blocking facade. On Windows that
         // state belongs to BML's InputHook; the native CK2 implementation also
         // exposes compatible helpers directly on CKInputManager.
