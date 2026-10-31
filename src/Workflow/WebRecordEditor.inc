@@ -24,7 +24,28 @@ bool WebRecordPath(const char *path) {
     return parsed.parent_path() == "/user/ModLoader/TAS" && parsed.extension() == ".tas";
 }
 } // namespace
+extern "C" int BML_WebMapLoad(const char *relativePath);
+extern "C" const char *BML_WebMapError();
+extern "C" int BML_WebMapStatus();
 extern "C" {
+// Shared launches pass through the real level-selection script before BML's
+// custom-map loader. Never synthesize keyboard events into a TAS timeline.
+EMSCRIPTEN_KEEPALIVE int BML_WebTASSharePrepare(int reset) {
+    static bool opening = false;
+    if (reset) opening = false;
+    if (BML_WebMapStatus() == 1) return -1;
+    if (!WebRecordMenuReady()) return -1;
+    auto *game = g_Mod->GetEngine()->GetGameInterface();
+    const std::string menu = game->GetActiveMenu();
+    if (menu == "start") { opening = false; return 1; }
+    if (menu.empty()) return 0;
+    if (menu != "main") { opening = false; return -1; }
+    if (!opening) {
+        if (!game->ClickMenuButton("start", webRecordError)) return 0;
+        opening = true;
+    }
+    return 0;
+}
 EMSCRIPTEN_KEEPALIVE const char *BML_WebTASError() { return webRecordError.c_str(); }
 EMSCRIPTEN_KEEPALIVE int BML_WebTASLoad(const char *path) {
     if (!WebRecordMenuReady())
@@ -158,34 +179,53 @@ EMSCRIPTEN_KEEPALIVE int BML_WebTASSaveCopy(const char *path) {
         return 0;
     }
 }
-EMSCRIPTEN_KEEPALIVE int BML_WebTASPlay(const char *path, int level) {
-    if (!WebRecordMenuReady())
-        return 0;
-    if (!WebRecordPath(path) || level < 1 || level > 13) {
+EMSCRIPTEN_KEEPALIVE int BML_WebTASShareLaunch(const char *path, const char *map, int level) {
+    if (!WebRecordMenuReady()) return 0;
+    const bool custom = map && *map;
+    const bool replay = path && *path;
+    if ((!custom && (level < 1 || level > 13)) || (!custom && !replay) ||
+        (replay && !WebRecordPath(path))) {
         webRecordError = "录像或关卡无效。";
         return 0;
     }
-    try {
-        auto *engine = g_Mod->GetEngine();
-        auto *projects = engine->GetServiceProvider().Resolve<ProjectManager>();
-        auto *project = projects ? projects->ResolveLaunchTarget(path, webRecordError) : nullptr;
-        if (!project || !project->IsValid() || !project->IsRecordProject())
-            return 0;
-        engine->SetAutoRestartEnabled(false);
-        projects->SetCurrentProject(project);
-        if (!engine->StartReplay()) {
-            webRecordError = "无法准备录像。";
+    if (custom) {
+        const std::filesystem::path parsed(map);
+        auto extension = parsed.extension().string();
+        for (char &c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::error_code fileError;
+        if (parsed.parent_path() != "/user/ModLoader/Maps" || extension != ".nmo" ||
+            !std::filesystem::is_regular_file(parsed, fileError)) {
+            webRecordError = "地图路径无效。";
             return 0;
         }
-        if (!engine->GetGameInterface()->LoadLevel(level, webRecordError)) {
-            engine->StopReplay(false);
+    }
+    auto *engine = g_Mod->GetEngine();
+    try {
+        if (replay) {
+            auto *projects = engine->GetServiceProvider().Resolve<ProjectManager>();
+            auto *project = projects ? projects->ResolveLaunchTarget(path, webRecordError) : nullptr;
+            if (!project || !project->IsValid() || !project->IsRecordProject()) return 0;
+            engine->SetAutoRestartEnabled(false);
+            projects->SetCurrentProject(project);
+            if (!engine->StartReplay()) { webRecordError = "无法准备录像。"; return 0; }
+        }
+        const bool loaded = custom
+            ? BML_WebMapLoad(std::filesystem::path(map).filename().string().c_str()) != 0
+            : engine->GetGameInterface()->LoadLevel(level, webRecordError);
+        if (!loaded) {
+            if (custom) webRecordError = BML_WebMapError();
+            if (replay) engine->StopReplay(true);
             return 0;
         }
         return 1;
     } catch (const std::exception &e) {
+        if (replay) engine->StopReplay(true);
         webRecordError = e.what();
         return 0;
     }
+}
+EMSCRIPTEN_KEEPALIVE int BML_WebTASPlay(const char *path, int level) {
+    return BML_WebTASShareLaunch(path, "", level);
 }
 }
 
