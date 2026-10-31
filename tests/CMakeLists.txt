@@ -14,6 +14,27 @@
 # CTest is enabled from the top-level CMakeLists.txt
 
 include(FetchContent)
+
+# Optional native integration against an explicit, matching engine runtime.
+# This uses real CK objects and the actual Logics Test behavior, not mocks.
+set(TAS_TEST_LOGICS_PLUGIN "" CACHE FILEPATH "Logics plugin for native counter integration")
+set(TAS_TEST_RUNTIME_DIR "" CACHE PATH "Native game runtime containing Bin and Plugins")
+set(TAS_TEST_TOOLBOX_SOURCE_DIR "" CACHE PATH "Matching TT_Toolbox_RT source for clock integration")
+if(BUILD_MOD AND APPLE AND TAS_TEST_LOGICS_PLUGIN)
+    add_executable(RecordedCounterBoundaryTest integration/RecordedCounterBoundaryTest.cpp)
+    target_include_directories(RecordedCounterBoundaryTest PRIVATE "${TAS_SOURCE_DIR}/Game")
+    target_link_libraries(RecordedCounterBoundaryTest PRIVATE BML CK2 VxMath)
+    if(TAS_TEST_TOOLBOX_SOURCE_DIR)
+        target_sources(RecordedCounterBoundaryTest PRIVATE "${TAS_TEST_TOOLBOX_SOURCE_DIR}/TimeManager.cpp")
+        target_include_directories(RecordedCounterBoundaryTest PRIVATE "${TAS_TEST_TOOLBOX_SOURCE_DIR}")
+        target_compile_definitions(RecordedCounterBoundaryTest PRIVATE BALLANCE_COUNTER_CLOCK_INTEGRATION)
+    endif()
+    add_test(NAME RecordedCounterBoundaryTest COMMAND RecordedCounterBoundaryTest "${TAS_TEST_LOGICS_PLUGIN}")
+    if(TAS_TEST_RUNTIME_DIR)
+        set_tests_properties(RecordedCounterBoundaryTest PROPERTIES ENVIRONMENT
+            "DYLD_LIBRARY_PATH=${TAS_TEST_RUNTIME_DIR}/Bin:${TAS_TEST_RUNTIME_DIR}/Plugins;DYLD_PRINT_LIBRARIES=1")
+    endif()
+endif()
 FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
@@ -60,6 +81,12 @@ add_tas_test(ResultTest
 )
 
 # LevelNamesTest – built-in level name parsing (header-only)
+add_tas_test(LegacyPreloadSessionTest
+    SOURCES LegacyPreloadSessionTest.cpp
+    DEPENDENCIES tas_core
+)
+add_test(NAME LegacyPreloadSessionTest COMMAND LegacyPreloadSessionTest)
+
 add_tas_test(LevelNamesTest
     SOURCES
         LevelNamesTest.cpp
@@ -371,7 +398,8 @@ target_compile_definitions(LuaSchedulerTest PRIVATE
             CK2
     )
     target_include_directories(RecordPlayerEditTest PRIVATE "${TAS_SOURCE_DIR}/Game" "${TAS_SOURCE_DIR}/Workflow")
-    target_link_libraries(RecordPlayerEditTest PRIVATE BML)
+    target_link_libraries(RecordPlayerEditTest PRIVATE BML
+        $<$<PLATFORM_ID:Darwin>:physics_RT>)
     add_test(NAME RecordPlayerEditTest COMMAND RecordPlayerEditTest)
     if(VIRTOOLS_SDK_RUNTIME_DIR)
         set_tests_properties(RecordPlayerEditTest PROPERTIES

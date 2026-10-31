@@ -67,6 +67,45 @@ static void *(*p_malloc_ptr)(unsigned int size);
 static void (*p_free_ptr)(void *data);
 static bool g_PhysicsAddressesInitialized = false;
 
+struct RuntimeObjectState {
+    float position[3];
+    float angles[3];
+    float velocity[3];
+    float angularVelocity[3];
+    int sleeping;
+};
+
+using RuntimeResetForTas = int (*)(CKBaseManager *, float);
+using RuntimeArmClockReset = int (*)(CKBaseManager *);
+using RuntimeCaptureBaseline = int (*)(CKBaseManager *, PhysicsRuntimeLevelBaseline *);
+using RuntimeRestoreBaseline = int (*)(CKBaseManager *, const PhysicsRuntimeLevelBaseline *);
+using RuntimeSetTimeFactor = int (*)(CKBaseManager *, float);
+using RuntimeGetTiming = int (*)(CKBaseManager *, float *, float *, float *, float *, double *);
+using RuntimeGetObject = void *(*)(CKBaseManager *, CK3dEntity *);
+using RuntimeGetObjectState = int (*)(void *, RuntimeObjectState *);
+using RuntimeGetCoreState = int (*)(void *, PhysicsRuntimeCoreState *);
+using RuntimeSetObjectVelocity = int (*)(void *, const float *, const float *);
+using RuntimeGetRandomSeed = int (*)();
+using RuntimeSetRandomSeed = void (*)(int);
+using RuntimeSetSolverMode = int (*)(int);
+using RuntimeGetSolverMode = int (*)();
+
+static RuntimeResetForTas g_RuntimeResetForTas = nullptr;
+static RuntimeArmClockReset g_RuntimeArmClockReset = nullptr;
+static RuntimeCaptureBaseline g_RuntimeCaptureBaseline = nullptr;
+static RuntimeRestoreBaseline g_RuntimeRestoreBaseline = nullptr;
+static RuntimeSetTimeFactor g_RuntimeSetTimeFactor = nullptr;
+static RuntimeGetTiming g_RuntimeGetTiming = nullptr;
+static RuntimeGetObject g_RuntimeGetObject = nullptr;
+static RuntimeGetObjectState g_RuntimeGetObjectState = nullptr;
+static RuntimeGetCoreState g_RuntimeGetCoreState = nullptr;
+static RuntimeSetObjectVelocity g_RuntimeSetObjectVelocity = nullptr;
+static RuntimeGetRandomSeed g_RuntimeGetRandomSeed = nullptr;
+static RuntimeSetRandomSeed g_RuntimeSetRandomSeed = nullptr;
+static RuntimeSetSolverMode g_RuntimeSetSolverMode = nullptr;
+static RuntimeGetSolverMode g_RuntimeGetSolverMode = nullptr;
+static bool g_RuntimeBridge = false;
+
 // ============================================================================
 // ADDRESS INITIALIZATION
 // ============================================================================
@@ -87,6 +126,43 @@ void InitPhysicsAddresses() {
     }
 
     void *base = moduleInfo.lpBaseOfDll;
+
+    g_RuntimeResetForTas = reinterpret_cast<RuntimeResetForTas>(
+        ::GetProcAddress(hModule, "TT_PhysicsResetForTas"));
+    g_RuntimeArmClockReset = reinterpret_cast<RuntimeArmClockReset>(
+        ::GetProcAddress(hModule, "TT_PhysicsArmClockResetOnNextObject"));
+    g_RuntimeCaptureBaseline = reinterpret_cast<RuntimeCaptureBaseline>(
+        ::GetProcAddress(hModule, "TT_PhysicsCaptureLevelBaseline"));
+    g_RuntimeRestoreBaseline = reinterpret_cast<RuntimeRestoreBaseline>(
+        ::GetProcAddress(hModule, "TT_PhysicsRestoreLevelBaseline"));
+    g_RuntimeSetTimeFactor = reinterpret_cast<RuntimeSetTimeFactor>(
+        ::GetProcAddress(hModule, "TT_PhysicsSetTimeFactor"));
+    g_RuntimeGetTiming = reinterpret_cast<RuntimeGetTiming>(
+        ::GetProcAddress(hModule, "TT_PhysicsGetTiming"));
+    g_RuntimeGetObject = reinterpret_cast<RuntimeGetObject>(
+        ::GetProcAddress(hModule, "TT_PhysicsGetObject"));
+    g_RuntimeGetObjectState = reinterpret_cast<RuntimeGetObjectState>(
+        ::GetProcAddress(hModule, "TT_PhysicsGetObjectState"));
+    g_RuntimeGetCoreState = reinterpret_cast<RuntimeGetCoreState>(
+        ::GetProcAddress(hModule, "TT_PhysicsGetCoreState"));
+    g_RuntimeSetObjectVelocity = reinterpret_cast<RuntimeSetObjectVelocity>(
+        ::GetProcAddress(hModule, "TT_PhysicsSetObjectVelocity"));
+    g_RuntimeGetRandomSeed = reinterpret_cast<RuntimeGetRandomSeed>(
+        ::GetProcAddress(hModule, "TT_PhysicsGetRandomSeed"));
+    g_RuntimeSetRandomSeed = reinterpret_cast<RuntimeSetRandomSeed>(
+        ::GetProcAddress(hModule, "TT_PhysicsSetRandomSeed"));
+    g_RuntimeSetSolverMode = reinterpret_cast<RuntimeSetSolverMode>(
+        ::GetProcAddress(hModule, "TT_PhysicsSetSolverMode"));
+    g_RuntimeGetSolverMode = reinterpret_cast<RuntimeGetSolverMode>(
+        ::GetProcAddress(hModule, "TT_PhysicsGetSolverMode"));
+    g_RuntimeBridge = g_RuntimeResetForTas && g_RuntimeCaptureBaseline &&
+        g_RuntimeRestoreBaseline && g_RuntimeSetTimeFactor && g_RuntimeGetTiming && g_RuntimeGetObject &&
+        g_RuntimeGetObjectState && g_RuntimeGetCoreState && g_RuntimeSetObjectVelocity &&
+        g_RuntimeGetRandomSeed && g_RuntimeSetRandomSeed;
+    if (g_RuntimeBridge) {
+        g_PhysicsAddressesInitialized = true;
+        return;
+    }
 
     // Load method pointers
     CP_LOAD_METHOD_PTR(IVP_U_Quat, set_quaternion, base, 0x191B0);
@@ -134,6 +210,10 @@ void p_free(void *data) {
 // ============================================================================
 
 void ivp_srand(int seed) {
+    if (g_RuntimeBridge) {
+        g_RuntimeSetRandomSeed(seed);
+        return;
+    }
     assert(IVP_RAND_SEED && "InitPhysicsAddresses() must be called before ivp_srand");
     if (!IVP_RAND_SEED) {
         return;
@@ -143,6 +223,9 @@ void ivp_srand(int seed) {
 }
 
 int ivp_srand_read() {
+    if (g_RuntimeBridge) {
+        return g_RuntimeGetRandomSeed();
+    }
     assert(IVP_RAND_SEED && "InitPhysicsAddresses() must be called before ivp_srand_read");
     if (!IVP_RAND_SEED) {
         return 1;
@@ -403,6 +486,10 @@ void PhysicsObject::GetDamping(float *speed, float *rot) {
 }
 
 void PhysicsObject::GetPosition(VxVector *worldPosition, VxVector *angles) {
+    if (g_RuntimeBridge) {
+        PhysicsRuntimeGetObjectState(this, worldPosition, angles, nullptr, nullptr, nullptr);
+        return;
+    }
     if (!m_RealObject) {
         if (worldPosition) {
             worldPosition->Set(0.0f, 0.0f, 0.0f);
@@ -443,6 +530,10 @@ void PhysicsObject::GetPositionMatrix(VxMatrix &positionMatrix) {
 }
 
 void PhysicsObject::GetVelocity(VxVector *velocity, VxVector *angularVelocity) {
+    if (g_RuntimeBridge) {
+        PhysicsRuntimeGetObjectState(this, nullptr, nullptr, velocity, angularVelocity, nullptr);
+        return;
+    }
     if (!velocity && !angularVelocity)
         return;
     if (!m_RealObject) {
@@ -473,6 +564,12 @@ void PhysicsObject::GetVelocity(VxVector *velocity, VxVector *angularVelocity) {
 }
 
 void PhysicsObject::SetVelocity(const VxVector *velocity, const VxVector *angularVelocity) {
+    if (g_RuntimeBridge) {
+        g_RuntimeSetObjectVelocity(this,
+            velocity ? &velocity->x : nullptr,
+            angularVelocity ? &angularVelocity->x : nullptr);
+        return;
+    }
     if (!m_RealObject) {
         return;
     }
@@ -511,5 +608,76 @@ bool PhysicsObject::IsStatic() const {
 PhysicsObject *CKIpionManager::GetPhysicsObject(CK3dEntity *entity) {
     if (!entity)
         return nullptr;
+    if (g_RuntimeBridge)
+        return static_cast<PhysicsObject *>(g_RuntimeGetObject(this, entity));
     return CP_CALL_METHOD_PTR(this, CP_METHOD_PTR_NAME(CKIpionManager, get_physics_object_internal), entity, 0);
+}
+
+bool PhysicsRuntimeBridgeActive() {
+    return g_RuntimeBridge;
+}
+
+bool PhysicsRuntimeResetForTas(CKIpionManager *manager, float deltaTimeMs) {
+    return g_RuntimeBridge && g_RuntimeResetForTas(manager, deltaTimeMs) != 0;
+}
+
+bool PhysicsRuntimeArmClockResetOnNextObject(CKIpionManager *manager) {
+    return g_RuntimeBridge && g_RuntimeArmClockReset && g_RuntimeArmClockReset(manager) != 0;
+}
+
+bool PhysicsRuntimeCaptureLevelBaseline(
+    CKIpionManager *manager, PhysicsRuntimeLevelBaseline &baseline) {
+    return g_RuntimeBridge && g_RuntimeCaptureBaseline(manager, &baseline) != 0;
+}
+
+bool PhysicsRuntimeRestoreLevelBaseline(
+    CKIpionManager *manager, const PhysicsRuntimeLevelBaseline &baseline) {
+    return g_RuntimeBridge && g_RuntimeRestoreBaseline(manager, &baseline) != 0;
+}
+
+bool PhysicsRuntimeSetTimeFactor(CKIpionManager *manager, float factor) {
+    return g_RuntimeBridge && g_RuntimeSetTimeFactor(manager, factor) != 0;
+}
+
+bool PhysicsRuntimeGetTiming(
+    CKIpionManager *manager, float *timeFactor, float *deltaTimeMs,
+    float *physicsDeltaSeconds, float *psiSeconds, double *simulationSeconds) {
+    return g_RuntimeBridge && g_RuntimeGetTiming(
+        manager, timeFactor, deltaTimeMs, physicsDeltaSeconds,
+        psiSeconds, simulationSeconds) != 0;
+}
+
+bool PhysicsRuntimeGetObjectState(
+    PhysicsObject *object, VxVector *position, VxVector *angles,
+    VxVector *velocity, VxVector *angularVelocity, bool *sleeping) {
+    if (!g_RuntimeBridge || !object)
+        return false;
+    RuntimeObjectState state = {};
+    if (!g_RuntimeGetObjectState(object, &state))
+        return false;
+    if (position) position->Set(state.position[0], state.position[1], state.position[2]);
+    if (angles) angles->Set(state.angles[0], state.angles[1], state.angles[2]);
+    if (velocity) velocity->Set(state.velocity[0], state.velocity[1], state.velocity[2]);
+    if (angularVelocity) angularVelocity->Set(
+        state.angularVelocity[0], state.angularVelocity[1], state.angularVelocity[2]);
+    if (sleeping) *sleeping = state.sleeping != 0;
+    return true;
+}
+
+bool PhysicsRuntimeGetCoreState(PhysicsObject *object, PhysicsRuntimeCoreState &state) {
+    if (!g_RuntimeBridge || !object)
+        return false;
+    return g_RuntimeGetCoreState(object, &state) != 0;
+}
+
+bool PhysicsRuntimeSetSolverMode(bool preciseX87) {
+    return g_RuntimeBridge && g_RuntimeSetSolverMode &&
+        g_RuntimeSetSolverMode(preciseX87 ? 1 : 0) != 0;
+}
+
+bool PhysicsRuntimeGetSolverMode(bool &preciseX87) {
+    if (!g_RuntimeBridge || !g_RuntimeGetSolverMode)
+        return false;
+    preciseX87 = g_RuntimeGetSolverMode() != 0;
+    return true;
 }

@@ -1,9 +1,13 @@
 #include "PlayerHostBridge.h"
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <cstring>
 #include <filesystem>
@@ -25,11 +29,16 @@ struct HostDiscovery {
 };
 
 bool Discover(HostDiscovery &result) {
+#ifdef _WIN32
     HMODULE executable = ::GetModuleHandleW(nullptr);
     if (!executable) return false;
 
     auto getApi = reinterpret_cast<BallanceTasHostGetApiFn>(
         ::GetProcAddress(executable, "BallanceTasHost_GetApi"));
+#else
+    auto getApi = reinterpret_cast<BallanceTasHostGetApiFn>(
+        dlsym(RTLD_DEFAULT, "BallanceTasHost_GetApi"));
+#endif
     if (!getApi) return false;
 
     const BallanceTasHostApi *api = getApi(BALLANCE_TAS_HOST_ABI_VERSION);

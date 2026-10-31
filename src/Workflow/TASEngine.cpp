@@ -1,6 +1,9 @@
 #include "TASEngine.h"
 
 #include <filesystem>
+#include <cstdlib>
+#include <cerrno>
+#include <limits>
 
 #include "EngineBootstrap.h"
 #include "Runtime/ContextLifecycleCoordinator.h"
@@ -137,7 +140,8 @@ void TASEngine::Start() {
 
     const float deterministicDeltaTime = ResolveLevelLoadPhysicsDeltaTime();
     const bool tasActive = LevelLoadRunsTAS();
-    AddTimer(1ul, [this, deterministicDeltaTime, tasActive]() {
+    const bool preserveHistory = m_PreserveLevelHistory;
+    auto resetPhysicsForLevel = [this, deterministicDeltaTime, tasActive, preserveHistory]() {
         if (m_GameInterface) {
             if (deterministicDeltaTime > 0.0f) {
                 Log::Info("Resetting physics time with TAS delta %.6f ms.", deterministicDeltaTime);
@@ -153,14 +157,56 @@ void TASEngine::Start() {
                 Log::Info("Physics level baseline: time factor %g, next_movement_check %d, seed %d.",
                           current.timeFactor, current.nextMovementCheck, current.randomSeed);
             }
-            if (tasActive) {
-                const auto &baseline = *m_PhysicsLevelBaseline;
+            if (tasActive && preserveHistory) {
+                Log::Info("Preserving inherited physics level state: time factor %.9g, next_movement_check %d, seed %d.",
+                          current.timeFactor, current.nextMovementCheck, current.randomSeed);
+            } else if (tasActive) {
+                auto baseline = *m_PhysicsLevelBaseline;
+                // Diagnostic only: test an independently captured original
+                // scheduler baseline. Never infer it from a later trajectory.
+                const char *seedText = std::getenv("BALLANCE_TAS_DIAG_LEVEL_SEED");
+                const char *checkText = std::getenv("BALLANCE_TAS_DIAG_LEVEL_MOVEMENT_CHECK");
+                if (seedText || checkText) {
+                    auto parse = [](const char *text, long long low, long long high, long long &out) {
+                        if (!text || !*text) return false;
+                        char *end = nullptr;
+                        errno = 0;
+                        out = std::strtoll(text, &end, 10);
+                        return errno != ERANGE && end != text && *end == '\0' && out >= low && out <= high;
+                    };
+                    long long seed = 0, check = 0;
+                    if (parse(seedText, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), seed)
+                        && seed != 0 && parse(checkText, 1, std::numeric_limits<short>::max(), check)) {
+                        baseline.randomSeed = static_cast<int>(seed);
+                        baseline.nextMovementCheck = static_cast<short>(check);
+                        Log::Info("Diagnostic scheduler baseline: seed %d, next_movement_check %d.",
+                                  baseline.randomSeed, baseline.nextMovementCheck);
+                    } else {
+                        Log::Error("Invalid diagnostic scheduler baseline; both seed and positive countdown are required.");
+                    }
+                }
                 Log::Info("Restoring physics level baseline (was time factor %g, next_movement_check %d, seed %d).",
                           current.timeFactor, current.nextMovementCheck, current.randomSeed);
                 m_GameInterface->RestorePhysicsLevelBaseline(baseline);
             }
         }
-    });
+    };
+
+    const char *deferredReset = std::getenv("BALLANCE_TAS_DEFER_LEVEL_CLOCK_RESET");
+    if (tasActive && deferredReset && std::strcmp(deferredReset, "sync") == 0) {
+        // Retain the old synchronous intervention only as an explicit
+        // diagnostic control. It changes which pre-load bodies simulate.
+        resetPhysicsForLevel();
+    } else {
+        // Original TASSupport::OnStart and upstream TASEngine::Start both use
+        // AddTimer(1). Preserve that callback phase even when TAS is active:
+        // synchronous reset gives the pre-load physics a different history.
+        // Diagnostic zero selects this frame's timer phase; one or no override
+        // uses the original delay. A timer tick is not elapsed physics time.
+        const size_t delay = tasActive && deferredReset &&
+            deferredReset[0] == '0' && deferredReset[1] == '\0' ? 0ul : 1ul;
+        AddTimer(delay, std::move(resetPhysicsForLevel));
+    }
 }
 
 void TASEngine::Stop() {
@@ -700,9 +746,7 @@ std::string TASEngine::BuildValidationOutputPath(TASProject *project) const {
     }
 
     std::string outputPath = path.string();
-    if (!outputPath.empty() && outputPath.back() != '\\' && outputPath.back() != '/') {
-        outputPath.push_back('\\');
-    }
+    if (!outputPath.empty()) outputPath.push_back(fs::path::preferred_separator);
     return outputPath;
 }
 

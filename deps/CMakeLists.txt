@@ -9,8 +9,11 @@ endif()
 
 if(BUILD_MOD)
 
-# MinHook
-add_subdirectory(minhook EXCLUDE_FROM_ALL)
+# MinHook is an x86/x64 Windows instruction patcher.  The native macOS port
+# uses an instance-vtable hook and deliberately does not compile MinHook.
+if(WIN32)
+    add_subdirectory(minhook EXCLUDE_FROM_ALL)
+endif()
 
 # zip
 add_subdirectory(zip EXCLUDE_FROM_ALL)

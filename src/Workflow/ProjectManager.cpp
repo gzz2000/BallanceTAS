@@ -26,7 +26,7 @@ ProjectManager::ProjectManager(TASEngine *engine) : m_Engine(engine) {
     m_TASRootPath = m_Engine->GetPath();
 
     // Create temp directory for zip extractions
-    m_TempDir = m_TASRootPath + "temp\\";
+    m_TempDir = (fs::path(m_TASRootPath) / "temp").string();
 
     // Ensure the directories exist.
     if (!fs::exists(m_TASRootPath)) {
@@ -53,7 +53,8 @@ static std::string ProjectStamp(const fs::directory_entry &entry) {
         return {};
     }
     const auto size = fs::is_regular_file(path, ec) ? fs::file_size(path, ec) : 0;
-    return std::to_string(time.time_since_epoch().count()) + ":" + std::to_string(ec ? 0 : size);
+    return std::to_string(static_cast<long long>(time.time_since_epoch().count())) + ":" +
+           std::to_string(static_cast<unsigned long long>(ec ? 0 : size));
 }
 
 std::string ProjectManager::ScanSignature() const {
@@ -120,7 +121,7 @@ void ProjectManager::RefreshProjects() {
             if (entry.is_directory()) {
                 // Traditional directory-based script project
                 std::string projectPath = NormalizePath(entry.path().string());
-                std::string manifestPath = projectPath + "\\manifest.lua";
+                std::string manifestPath = (fs::path(projectPath) / "manifest.lua").string();
                 if (fs::exists(manifestPath) && ValidateProjectStructure(projectPath) &&
                     !reuse(projectPath, stamp)) {
                     add(LoadDirectoryProject(projectPath), stamp);
@@ -247,7 +248,7 @@ TASProject *ProjectManager::ResolveLaunchTarget(const std::string &target, std::
 }
 
 std::unique_ptr<TASProject> ProjectManager::LoadDirectoryProject(const std::string &projectPath) {
-    std::string manifestPath = projectPath + "\\manifest.lua";
+    std::string manifestPath = (fs::path(projectPath) / "manifest.lua").string();
     tas::lua::LuaValue manifest_table = ParseManifestFile(manifestPath);
 
     if (!manifest_table.IsTable()) {
@@ -438,8 +439,7 @@ bool ProjectManager::ExtractZipProject(const std::string &zipPath, const std::st
         }
 
         std::string normalizedEntryName = NormalizePath(entryName);
-        std::string outputPath = tempDir;
-        outputPath.append("\\").append(normalizedEntryName);
+        std::string outputPath = (fs::path(tempDir) / fs::path(normalizedEntryName)).string();
 
         // Create parent directories if needed
         fs::path outputFilePath(outputPath);
@@ -742,8 +742,11 @@ std::string ProjectManager::GetProjectNameFromZip(const std::string &zipPath) {
 
 std::string ProjectManager::NormalizePath(const std::string &path) {
     std::string normalized = path;
-    // Convert forward slashes to backslashes on Windows
+#ifdef _WIN32
     std::replace(normalized.begin(), normalized.end(), '/', '\\');
+#else
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+#endif
     return normalized;
 }
 
@@ -753,8 +756,8 @@ bool ProjectManager::ValidateProjectStructure(const std::string &projectPath) {
     }
 
     // Check for required files
-    std::string manifestPath = projectPath + "\\manifest.lua";
-    std::string mainScriptPath = projectPath + "\\main.lua";
+    std::string manifestPath = (fs::path(projectPath) / "manifest.lua").string();
+    std::string mainScriptPath = (fs::path(projectPath) / "main.lua").string();
 
     return fs::exists(manifestPath) && fs::exists(mainScriptPath) &&
         fs::is_regular_file(manifestPath) && fs::is_regular_file(mainScriptPath);

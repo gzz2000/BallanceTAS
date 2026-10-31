@@ -1,6 +1,7 @@
 #include "ScriptContext.h"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "Logger.h"
 #include "TASConstants.h"
@@ -122,8 +123,8 @@ bool ScriptContext::Initialize() {
         // 5. Register Lua APIs and configure script resolution for this context.
         LuaApi::Register(this);
         lua_State *state = m_LuaState.Get();
-        AddLuaPath(state, TASConstants::DefaultBasePath);
-        std::string luaSubPath = std::string(TASConstants::DefaultBasePath) + "lua";
+        AddLuaPath(state, m_Engine->GetPath());
+        std::string luaSubPath = (std::filesystem::path(m_Engine->GetPath()) / "lua").string();
         AddLuaPath(state, luaSubPath);
 
         // 6. Set default GC mode (Generational for TAS workloads)

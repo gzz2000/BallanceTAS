@@ -82,14 +82,17 @@ add_library(tas_game STATIC
         Game/IObjectProvider.h
         Game/IGameStateProvider.h
         Game/ITimeProvider.h
-        Game/physics_RT.h           Game/physics_RT.cpp
+        Game/physics_RT.h
+        $<$<PLATFORM_ID:Windows>:Game/physics_RT.cpp>
         Game/PhysicsDeterminism.h   Game/PhysicsDeterminism.cpp
         Game/InputSystem.h          Game/InputSystem.cpp
         Game/TASHook.h
         Game/Hook.h
 )
 target_link_libraries(tas_game
-        PUBLIC  tas_core BML CK2 VxMath minhook
+        PUBLIC  tas_core BML CK2 VxMath
+        $<$<PLATFORM_ID:Windows>:minhook>
+        $<$<PLATFORM_ID:Darwin>:physics_RT>
 )
 set_target_properties(tas_game PROPERTIES FOLDER "TAS/Modules")
 
@@ -207,10 +210,13 @@ set_target_properties(tas_lua_bindings PROPERTIES FOLDER "TAS/Modules")
 # ─────────────────────────────────────────────────────────────────────────────
 add_library(tas_ui STATIC
         UI/UIManager.h              UI/UIManager.cpp
-        UI/TASMenu.h                UI/TASMenu.cpp
+        $<$<BOOL:${TAS_ENABLE_LEGACY_MENU}>:UI/TASMenu.h>
+        $<$<BOOL:${TAS_ENABLE_LEGACY_MENU}>:UI/TASMenu.cpp>
         UI/TASMenuPresentation.h    UI/TASMenuPresentation.cpp
         UI/InGameOSD.h              UI/InGameOSD.cpp
 )
+target_compile_definitions(tas_ui PUBLIC
+        TAS_ENABLE_LEGACY_MENU=$<BOOL:${TAS_ENABLE_LEGACY_MENU}>)
 target_link_libraries(tas_ui
         PUBLIC  tas_core
         PRIVATE tas_features BML
@@ -246,5 +252,21 @@ target_compile_options(BallanceTAS PRIVATE
 )
 
 set_target_properties(BallanceTAS PROPERTIES SUFFIX ".bmodp")
+if(APPLE)
+    # Diagnostic-only native rasterizer API; absent from normal mod builds.
+    set(TAS_PIXEL_TRACE_INCLUDE_DIR "" CACHE PATH "Native CKRasterizer headers for optional pixel diagnostics")
+    if(TAS_PIXEL_TRACE_INCLUDE_DIR)
+        if(NOT EXISTS "${TAS_PIXEL_TRACE_INCLUDE_DIR}/CKRasterizer.h")
+            message(FATAL_ERROR "TAS_PIXEL_TRACE_INCLUDE_DIR must contain CKRasterizer.h")
+        endif()
+        target_include_directories(BallanceTAS PRIVATE "${TAS_PIXEL_TRACE_INCLUDE_DIR}")
+        target_compile_definitions(BallanceTAS PRIVATE TAS_ENABLE_PIXEL_TRACE=1)
+    endif()
+    # Mods are installed under Application Support, while their dependencies
+    # live beside the native Player inside the application bundle.
+    set_target_properties(BallanceTAS PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "@executable_path/../Plugins;@executable_path/../BuildingBlocks;@executable_path/../Bin")
+endif()
 
 endif() # BUILD_MOD

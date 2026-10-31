@@ -6,6 +6,7 @@
 
 #include "ConfigService.h"
 #include "HookManager.h"
+#include "LegacyPreloadSession.h"
 
 // Forward-declare the core engine to avoid including its full header here.
 // This reduces compile times and keeps dependencies clean.
@@ -55,6 +56,7 @@ public:
 
     // Per-frame processing
     void OnProcess() override;
+    void OnRender(CK_RENDER_FLAGS flags) override;
 
     // Configuration handling
     void OnModifyConfig(const char *category, const char *key, IProperty *prop) override;
@@ -63,6 +65,19 @@ public:
                       CKBOOL addToScene, CKBOOL reuseMeshes, CKBOOL reuseMaterials, CKBOOL dynamic,
                       XObjectArray *objArray, CKObject *masterObj) override;
     void OnLoadScript(const char *filename, CKBehavior *script) override;
+    void OnPhysicalize(CK3dEntity *target, CKBOOL fixed, float friction, float elasticity, float mass,
+                       const char *collGroup, CKBOOL startFrozen, CKBOOL enableColl, CKBOOL calcMassCenter,
+                       float linearDamp, float rotDamp, const char *collSurface, VxVector massCenter,
+                       int convexCnt, CKMesh **convexMesh, int ballCnt, VxVector *ballCenter, float *ballRadius,
+                       int concaveCnt, CKMesh **concaveMesh) override;
+    void OnUnphysicalize(CK3dEntity *target) override;
+    std::string GetLegacyPreloadError() const {
+#if defined(__APPLE__)
+        return m_LegacyPreload.Error();
+#else
+        return {};
+#endif
+    }
 
     //================================================================
     // Game Event Forwarding
@@ -207,6 +222,7 @@ private:
     std::unique_ptr<UIManager> m_UIManager;
 
     bool m_Initialized = false;
+    LegacyPreloadSession m_LegacyPreload;
     bool m_GameHooksEnabled = false;
     // Whether the game's ball and camera control are on (BallNav / CamNav messages).
     bool m_BallNavActive = false;

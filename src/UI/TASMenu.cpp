@@ -91,12 +91,28 @@ static void DrawStateLine(float y, const TASMenuStatePresentation &state) {
 }
 
 // TASMenuPage Implementation
-TASMenuPage::TASMenuPage(TASMenu *menu, std::string name) : Page(std::move(name)), m_Menu(menu) {
-    // Page registration is now handled by the menu using CreatePage
+TASMenuPage::TASMenuPage(TASMenu *menu, std::string name)
+    : m_Menu(menu), m_Title(std::move(name)) {}
+
+Bui::PageAction TASMenuPage::OnFrame() {
+    m_Menu->m_FrameAction = Bui::PageAction::None();
+    m_Menu->m_DrawingPage = true;
+    try {
+        OnPostBegin();
+        if (m_Menu->m_FrameAction.IsNone()) OnDraw();
+        if (m_Menu->m_FrameAction.IsNone() && Bui::NavBack())
+            m_Menu->QueueAction(Bui::PageAction::Back());
+    } catch (...) {
+        m_Menu->m_DrawingPage = false;
+        throw;
+    }
+    m_Menu->m_DrawingPage = false;
+    return std::move(m_Menu->m_FrameAction);
 }
 
 // TASMenu Implementation
-TASMenu::TASMenu(TASEngine *engine) : m_Engine(engine) {
+TASMenu::TASMenu(TASEngine *engine) : m_Engine(engine),
+    m_Routes([this]() { OnOpen(); }, [this]() { OnClose(); }) {
     if (!m_Engine) {
         throw std::runtime_error("TASMenu requires valid TASEngine instances");
     }
@@ -107,12 +123,15 @@ TASMenu::~TASMenu() {
 }
 
 void TASMenu::Init() {
+    if (m_Initialized) return;
     try {
-        CreatePage<TASListPage>(this);
-        CreatePage<TASDetailsPage>(this);
-        CreatePage<TASRecordingPage>(this);
+        if (!m_Routes.CreatePage<TASListPage>("TAS Projects", this) ||
+            !m_Routes.CreatePage<TASDetailsPage>("TAS Details", this) ||
+            !m_Routes.CreatePage<TASRecordingPage>("Record New TAS", this))
+            throw std::runtime_error("Could not register TAS menu routes");
 
         RefreshProjects();
+        m_Initialized = true;
     } catch (const std::exception &e) {
         Log::Error("Failed to initialize TAS Menu: %s", e.what());
         throw;
@@ -120,16 +139,73 @@ void TASMenu::Init() {
 }
 
 void TASMenu::Shutdown() {
+    if (m_ShuttingDown) return;
+    m_ShuttingDown = true;
     try {
-        // Pages are managed by the Menu base class, no need to manually reset
         Close();
     } catch (const std::exception &e) {
         Log::Error("Exception during TAS Menu shutdown: %s", e.what());
     }
+    m_Initialized = false;
 }
 
 bool TASMenu::IsOpen() const {
-    return m_CurrentPage != nullptr && m_CurrentPage->IsVisible();
+    return !m_PendingRoute.empty() || m_Routes.IsOpen();
+}
+
+bool TASMenu::Open(const std::string &route) {
+    if (!m_Initialized || m_ShuttingDown || !m_Routes.HasPage(route)) return false;
+    if (IsOpen()) return true;
+    Bui::BlockKeyboardInput();
+    m_InputBlocked = true;
+    m_PendingRoute = route;
+    m_OpenRequestFrame = ImGui::GetCurrentContext() ? ImGui::GetFrameCount() : -1;
+    return true;
+}
+
+bool TASMenu::Close() {
+    if (m_DrawingPage) {
+        QueueAction(Bui::PageAction::Close());
+        return true;
+    }
+    if (!m_PendingRoute.empty()) {
+        m_PendingRoute.clear();
+        m_OpenRequestFrame = -1;
+        OnClose();
+        return true;
+    }
+    return m_Routes.Close();
+}
+
+bool TASMenu::Render() {
+    if (!m_PendingRoute.empty() && (!ImGui::GetCurrentContext() ||
+        ImGui::GetFrameCount() != m_OpenRequestFrame)) {
+        std::string route = std::move(m_PendingRoute);
+        m_PendingRoute.clear();
+        m_OpenRequestFrame = -1;
+        if (!m_Routes.Open(route)) { OnClose(); return false; }
+    }
+    return m_Routes.Render();
+}
+
+void TASMenu::QueueAction(Bui::PageAction action) {
+    if (m_FrameAction.IsNone()) m_FrameAction = std::move(action);
+}
+
+void TASMenu::OpenPage(const std::string &route) {
+    const bool root = route == "TAS Projects";
+    if (m_DrawingPage) {
+        QueueAction(root ? Bui::PageAction::Open(route) : Bui::PageAction::Push(route));
+    } else if (root) {
+        m_Routes.Open(route);
+    } else {
+        m_Routes.Push(route);
+    }
+}
+
+void TASMenu::OpenPrevPage() {
+    if (m_DrawingPage) QueueAction(Bui::PageAction::Back());
+    else m_Routes.Back();
 }
 
 void TASMenu::SetLastActionError(std::string error) {
@@ -211,16 +287,16 @@ void TASMenu::AnnouncePendingTAS() const {
 }
 
 void TASMenu::OnOpen() {
-    auto *inputManager = m_Engine->GetGameInterface()->GetInputManager();
-    if (inputManager) {
-        inputManager->Block(CK_INPUT_DEVICE_KEYBOARD);
-    }
-
     RefreshProjects();
 }
 
 void TASMenu::OnClose() {
-    m_Engine->GetGameInterface()->OnCloseMenu();
+    if (!m_InputBlocked) return;
+    m_InputBlocked = false;
+    if (m_ShuttingDown || m_Engine->GetGameInterface()->IsIngame())
+        Bui::UnblockKeyboardAfterRelease();
+    else
+        Bui::TransitionToScriptAndUnblock("Menu_Start");
 }
 
 void TASMenu::RefreshProjects() {
@@ -394,7 +470,7 @@ TASListPage::TASListPage(TASMenu *menu) : TASMenuPage(menu, "TAS Projects") {}
 TASListPage::~TASListPage() = default;
 
 void TASListPage::OnPostBegin() {
-    if (!IsVisible() || !m_Menu || !m_Menu->GetEngine())
+    if (!m_Menu || !m_Menu->GetEngine())
         return;
 
     Bui::Title(m_Title.c_str(), 0.095f, 1.25f);
@@ -403,7 +479,7 @@ void TASListPage::OnPostBegin() {
     const auto &projects = projectManager->GetProjects();
 
     m_Count = static_cast<int>(projects.size());
-    SetPageCount(m_Count % MAX_ENTRIES_PER_PAGE == 0 ? m_Count / MAX_ENTRIES_PER_PAGE : m_Count / MAX_ENTRIES_PER_PAGE + 1);
+    m_Pagination.Update(m_Count, MAX_ENTRIES_PER_PAGE);
 }
 
 void TASListPage::OnDraw() {
@@ -427,7 +503,7 @@ void TASListPage::OnDraw() {
     }
 
     bool entryToggle = true;
-    const int baseIndex = GetPage() * MAX_ENTRIES_PER_PAGE;
+    const int baseIndex = m_Pagination.GetFirstItem();
 
     Bui::Entries([
         &entryToggle,
@@ -504,20 +580,20 @@ void TASListPage::DrawMainButtons() {
 }
 
 void TASListPage::DrawPageNavigation() {
-    if (m_PageCount <= 1) {
+    if (m_Pagination.GetPageCount() <= 1) {
         return;
     }
 
-    if (m_PageIndex > 0 && Bui::NavLeft(0.360f, 0.430f)) {
-        PrevPage();
+    if (m_Pagination.CanPrevious() && Bui::NavLeft(0.360f, 0.430f)) {
+        m_Pagination.Previous();
     }
 
     char pageText[32] = {};
-    std::snprintf(pageText, sizeof(pageText), "%d/%d", m_PageIndex + 1, m_PageCount);
+    std::snprintf(pageText, sizeof(pageText), "%d/%d", m_Pagination.GetPage() + 1, m_Pagination.GetPageCount());
     TextBlock(0.486f, 0.708f, pageText, 0.04f, 0.70f);
 
-    if (m_PageIndex < m_PageCount - 1 && Bui::NavRight(0.624f, 0.430f)) {
-        NextPage();
+    if (m_Pagination.CanNext() && Bui::NavRight(0.624f, 0.430f)) {
+        m_Pagination.Next();
     }
 }
 
@@ -581,7 +657,7 @@ TASDetailsPage::TASDetailsPage(TASMenu *menu) : TASMenuPage(menu, "TAS Details")
 TASDetailsPage::~TASDetailsPage() = default;
 
 void TASDetailsPage::OnPostBegin() {
-    if (!IsVisible() || !m_Menu)
+    if (!m_Menu)
         return;
 
     auto *project = m_Menu->GetCurrentProject();
@@ -737,8 +813,6 @@ TASRecordingPage::TASRecordingPage(TASMenu *menu) : TASMenuPage(menu, "Record Ne
 }
 
 void TASRecordingPage::OnPostBegin() {
-    if (!IsVisible()) return;
-
     Bui::Title("Record New TAS", 0.095f, 1.25f);
 }
 
@@ -833,7 +907,7 @@ void TASRecordingPage::StartRecording() {
     std::string projectName = m_ProjectName;
     if (projectName.empty()) {
         projectName = "TAS_Untitled";
-        strcpy_s(m_ProjectName, sizeof(m_ProjectName), projectName.c_str());
+        std::snprintf(m_ProjectName, sizeof(m_ProjectName), "%s", projectName.c_str());
     }
 
     // Replace invalid characters
@@ -845,7 +919,7 @@ void TASRecordingPage::StartRecording() {
                     '_');
 
     // Update the field with cleaned name
-    strcpy_s(m_ProjectName, sizeof(m_ProjectName), projectName.c_str());
+    std::snprintf(m_ProjectName, sizeof(m_ProjectName), "%s", projectName.c_str());
 
     // Get target level string
     std::string targetLevel = "Level_01";

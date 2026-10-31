@@ -274,12 +274,7 @@ std::string TASProject::GetProjectFilePath(const std::string &fileName, const st
         basePath = m_ProjectPath;
     }
 
-    // Handle path separator properly
-    if (!basePath.empty() && basePath.back() != '\\' && basePath.back() != '/') {
-        basePath += "\\";
-    }
-
-    return basePath + fileName;
+    return (std::filesystem::path(basePath) / std::filesystem::path(fileName)).string();
 }
 
 

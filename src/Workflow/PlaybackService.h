@@ -74,6 +74,7 @@ public:
     float GetProgress() const;
     size_t GetCurrentTick() const { return m_CurrentTick; }
     TASProject *GetCurrentProject() const { return m_CurrentProject; }
+    bool RewindRecordTo(size_t tick);
 
     /**
      * @brief Callback type invoked when playback finishes naturally.

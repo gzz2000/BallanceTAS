@@ -36,6 +36,8 @@ RecordingService::~RecordingService() {
 }
 
 Result<void> RecordingService::PrepareRecording(bool useValidation) {
+    // Preparing a request does not sample input or advance record physics.
+    // ActivateRecording checks initialization before installing any callbacks.
     if (m_IsRecording) {
         return Result<void>::Error("Already recording", "recording_service");
     }
@@ -51,6 +53,8 @@ Result<void> RecordingService::PrepareRecording(bool useValidation) {
 }
 
 Result<void> RecordingService::ActivateRecording() {
+    const auto preloadError = m_GameControl->GetLegacyPreloadError();
+    if (!preloadError.empty()) return Result<void>::Error(preloadError, "recording_service");
     if (m_IsRecording) {
         return Result<void>::Error("Already recording", "recording_service");
     }

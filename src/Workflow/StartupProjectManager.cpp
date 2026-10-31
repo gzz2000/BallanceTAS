@@ -1,6 +1,7 @@
 #include "StartupProjectManager.h"
 
 #include "GameInterface.h"
+#include "physics_RT.h"
 #include "LevelNames.h"
 #include "Logger.h"
 #include "TASEngine.h"
@@ -172,7 +173,10 @@ void StartupProjectManager::TickArm() {
 
 // The menu becomes usable a few frames after the game reaches it, so keep trying.
 void StartupProjectManager::TickLoadLevel() {
-    constexpr int kMaxFrames = 20 * 60;
+    // This counter advances on simulation ticks (normally 264 Hz), not display
+    // frames.  The old 20*60 limit expired after about 4.5 seconds, during the
+    // unskippable startup sequence, before Menu_Start existed.
+    constexpr int kMaxFrames = 60 * 264;
     GameInterface *game = m_Engine->GetGameInterface();
     if (!game || game->IsIngame()) {
         // No game, or the player got there first.

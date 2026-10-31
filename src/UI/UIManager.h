@@ -205,7 +205,13 @@ public:
      * @brief Gets the TAS menu instance.
      * @return Pointer to the TAS menu, or nullptr if not initialized.
      */
-    TASMenu *GetTASMenu() const { return m_TASMenu.get(); }
+    TASMenu *GetTASMenu() const {
+#if !TAS_ENABLE_LEGACY_MENU
+        return nullptr;
+#else
+        return m_TASMenu.get();
+#endif
+    }
 
     /**
      * @brief Gets the In-Game OSD instance.
@@ -236,7 +242,9 @@ private:
     TASEngine *m_Engine;
 
     // --- UI Components ---
+#if TAS_ENABLE_LEGACY_MENU
     std::unique_ptr<TASMenu> m_TASMenu;
+#endif
     std::unique_ptr<InGameOSD> m_InGameOSD;
 
     // --- State ---

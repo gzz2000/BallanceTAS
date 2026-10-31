@@ -120,6 +120,8 @@ public:
     const std::string &GetValidationOutputPath() const;
     bool IsAutoRestartEnabled() const { return m_AutoRestart; }
     void SetAutoRestartEnabled(bool enabled) { m_AutoRestart = enabled; }
+    // Applied at the next level-load boundary, never to an active simulation.
+    void SetPreserveLevelHistory(bool enabled) { m_PreserveLevelHistory = enabled; }
     const std::string &GetLastCompletedPlaybackProjectName() const { return m_LastCompletedPlaybackProjectName; }
     std::string GetLastTranslationResultMessage() const;
 
@@ -176,6 +178,7 @@ private:
     std::string m_Path = TASConstants::DefaultBasePath;
     std::string m_LastCompletedPlaybackProjectName;
     bool m_AutoRestart = false;
+    bool m_PreserveLevelHistory = false;
     bool m_ValidationEnabled = false;
     std::optional<PhysicsDeterminism::PhysicsLevelBaseline> m_PhysicsLevelBaseline;
 

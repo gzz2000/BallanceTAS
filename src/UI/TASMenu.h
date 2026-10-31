@@ -18,13 +18,17 @@ public:
     ~TASMenuPage() override = default;
 
 protected:
+    Bui::PageAction OnFrame() final;
+    virtual void OnPostBegin() {}
+    virtual void OnDraw() = 0;
     TASMenu *m_Menu;
+    std::string m_Title;
 };
 
-class TASMenu : public Bui::Menu {
+class TASMenu {
 public:
     explicit TASMenu(TASEngine *engine);
-    ~TASMenu() override;
+    ~TASMenu();
 
     // TASMenu is not copyable or movable
     TASMenu(const TASMenu &) = delete;
@@ -33,8 +37,11 @@ public:
     void Init();
     void Shutdown();
 
-    void OnOpen() override;
-    void OnClose() override;
+    bool Open(const std::string &route);
+    bool Close();
+    bool Render();
+    void OpenPage(const std::string &route);
+    void OpenPrevPage();
 
     // Project management
     void RefreshProjects();
@@ -62,10 +69,23 @@ public:
     TASEngine *GetEngine() const { return m_Engine; }
 
 private:
+    friend class TASMenuPage;
+    void OnOpen();
+    void OnClose();
+    void QueueAction(Bui::PageAction action);
     TASMenuRuntimeSnapshot BuildRuntimeSnapshot() const;
 
     TASEngine *m_Engine;
     std::string m_LastActionError;
+    bool m_Initialized = false;
+    bool m_ShuttingDown = false;
+    bool m_InputBlocked = false;
+    bool m_DrawingPage = false;
+    int m_OpenRequestFrame = -1;
+    std::string m_PendingRoute;
+    Bui::PageAction m_FrameAction;
+    // Routes own the pages, and must die before the state they reference.
+    Bui::Menu m_Routes;
 };
 
 class TASListPage : public TASMenuPage {
@@ -83,6 +103,7 @@ private:
     void DrawTASStatus(const TASMenuStatePresentation &state);
 
     int m_Count = 0;
+    Bui::Pagination m_Pagination;
     static constexpr int MAX_ENTRIES_PER_PAGE = 7;
 };
 

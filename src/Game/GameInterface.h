@@ -58,9 +58,10 @@ public:
     CKContext *GetCKContext() const override { return m_CKContext; }
     CKRenderContext *GetRenderContext() const override { return m_RenderContext; }
     CKTimeManager *GetTimeManager() const override { return m_TimeManager; }
-    InputHook *GetInputManager() const { return m_InputManager; }
+    CKInputManager *GetInputManager() const override { return m_InputManager; }
     CKIpionManager *GetIpionManager() const { return m_IpionManager; }
     UIManager *GetUIManager() const;
+    std::string GetLegacyPreloadError() const override;
 
     // ========================================
     // Initialization & Configuration
@@ -76,6 +77,7 @@ public:
     // ========================================
     void ResetPhysicsTime() override;
     void ResetPhysicsTime(float deltaTimeMs);
+    void SetHostPhysicsTimeScale(float scale);
     /// Physics state a level load inherits from earlier levels (see PhysicsLevelBaseline).
     PhysicsDeterminism::PhysicsLevelBaseline CapturePhysicsLevelBaseline() const;
     /**
@@ -272,7 +274,7 @@ private:
     CKContext *m_CKContext = nullptr;
     CKRenderContext *m_RenderContext = nullptr;
     CKTimeManager *m_TimeManager = nullptr;
-    InputHook *m_InputManager = nullptr;
+    CKInputManager *m_InputManager = nullptr;
     CKIpionManager *m_IpionManager = nullptr;
 
     // ========================================

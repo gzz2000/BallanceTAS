@@ -1,6 +1,12 @@
 #include "ConfigService.h"
 
+#ifdef _WIN32
 #include <Windows.h>
+#else
+#include <dlfcn.h>
+#include <mach-o/dyld.h>
+#include <cstring>
+#endif
 
 #include <algorithm>
 
@@ -15,12 +21,27 @@ static void SetChoiceEditor(IProperty *property, const std::vector<std::string> 
     using SetEditorFn = int(__cdecl *)(IProperty *, int);
     constexpr int kChoiceEditor = 2; // BML_CONFIG_EDITOR_CHOICE
 
-    HMODULE loader = ::GetModuleHandleA("BMLPlus.dll");
-    if (!property || !loader) {
+    if (!property) {
         return;
     }
+#ifdef _WIN32
+    HMODULE loader = ::GetModuleHandleA("BMLPlus.dll");
+    if (!loader) return;
     auto setChoices = reinterpret_cast<SetChoicesFn>(::GetProcAddress(loader, "BML_SetConfigPropertyChoices"));
     auto setEditor = reinterpret_cast<SetEditorFn>(::GetProcAddress(loader, "BML_SetConfigPropertyEditor"));
+#else
+    SetChoicesFn setChoices = nullptr;
+    SetEditorFn setEditor = nullptr;
+    for (uint32_t i = 0; i < _dyld_image_count() && (!setChoices || !setEditor); ++i) {
+        const char *image = _dyld_get_image_name(i);
+        if (!image || !std::strstr(image, "libBMLPlus.dylib")) continue;
+        if (void *loader = dlopen(image, RTLD_LAZY | RTLD_NOLOAD)) {
+            setChoices = reinterpret_cast<SetChoicesFn>(dlsym(loader, "BML_SetConfigPropertyChoices"));
+            setEditor = reinterpret_cast<SetEditorFn>(dlsym(loader, "BML_SetConfigPropertyEditor"));
+            dlclose(loader);
+        }
+    }
+#endif
     if (!setChoices || !setEditor) {
         return;
     }
@@ -51,6 +72,14 @@ void ConfigService::RegisterProperties(IConfig *config) {
     m_AutoRestart->SetComment("Keep a record or level script armed after its playback ends, however it ends, "
                               "so it plays again the next time a level loads.");
     m_AutoRestart->SetDefaultBoolean(true);
+
+    m_PreserveLevelHistory = config->GetProperty("TAS", "PreserveLevelHistory");
+    m_PreserveLevelHistory->SetComment(
+        "On the next TAS level load, keep the physics state left by earlier levels. "
+        "Use for legacy records requiring a second playback in the same game process. "
+        "Off restores the first load's physics baseline for repeatable practice. "
+        "This does not change the clock-reset version or recreate missing recording environments.");
+    m_PreserveLevelHistory->SetDefaultBoolean(false);
 
     m_SkipRenderUntilFrame = config->GetProperty("TAS", "SkipRenderUntilFrame");
     m_SkipRenderUntilFrame->SetComment("During playback, skip rendering until this playback frame to get there "
@@ -141,7 +170,7 @@ void ConfigService::RegisterProperties(IConfig *config) {
 void ConfigService::OnPropertyChanged(const char *category, const char *key, IProperty *prop) {
     if (!m_EventBus) return;
 
-    if (prop == m_Enabled || prop == m_Validation || prop == m_AutoRestart || prop == m_SkipRenderUntilFrame ||
+    if (prop == m_Enabled || prop == m_Validation || prop == m_AutoRestart || prop == m_PreserveLevelHistory || prop == m_SkipRenderUntilFrame ||
         prop == m_StopOnFinish || prop == m_StopKey || prop == m_RecordingMaxFrames ||
         prop == m_StartupScriptEnabled || prop == m_StartupScriptProject || prop == m_StartupLevel ||
         prop == m_AutoLoadStartupScript || prop == m_ShowOSD ||

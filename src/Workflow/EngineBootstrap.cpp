@@ -163,9 +163,7 @@ RuntimeSession::Hooks BuildRuntimeSessionHooks(TASEngine &engine) {
                 path = path.parent_path();
             }
             outputPath = path.string();
-            if (!outputPath.empty() && outputPath.back() != '\\' && outputPath.back() != '/') {
-                outputPath.push_back('\\');
-            }
+            if (!outputPath.empty()) outputPath.push_back(std::filesystem::path::preferred_separator);
         }
         if (outputPath.empty()) {
             return Result<void>::Ok();

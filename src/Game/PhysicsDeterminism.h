@@ -7,7 +7,7 @@ class CKBaseManager;
 /**
  * @brief IVP physics determinism support for physics_RT.dll.
  *
- * - PhysicsLevelBaseline: state restored at every TAS level load (see TASEngine::Start).
+ * - PhysicsLevelBaseline: state restored by canonical TAS level loads (see TASEngine::Start).
  * - FPU monitor: the shipped physics_RT.dll does not set FPU precision in
  *   event_loop(), so physics runs at whatever x87 precision the process is in.
  *   While a TAS is active the monitor logs control word changes seen at the

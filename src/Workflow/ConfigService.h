@@ -48,6 +48,7 @@ public:
     bool IsEnabled() const         { return m_Enabled && m_Enabled->GetBoolean(); }
     bool IsValidation() const      { return m_Validation && m_Validation->GetBoolean(); }
     bool IsAutoRestart() const     { return m_AutoRestart && m_AutoRestart->GetBoolean(); }
+    bool PreserveLevelHistory() const { return m_PreserveLevelHistory && m_PreserveLevelHistory->GetBoolean(); }
     bool IsStopOnFinish() const    { return m_StopOnFinish && m_StopOnFinish->GetBoolean(); }
     /// Playback frame up to which rendering is skipped; 0 when off.
     int GetSkipRenderUntilFrame() const {
@@ -77,6 +78,7 @@ private:
     IProperty *m_Enabled = nullptr;
     IProperty *m_Validation = nullptr;
     IProperty *m_AutoRestart = nullptr;
+    IProperty *m_PreserveLevelHistory = nullptr;
     IProperty *m_StopOnFinish = nullptr;
     IProperty *m_SkipRenderUntilFrame = nullptr;
     IProperty *m_StopKey = nullptr;

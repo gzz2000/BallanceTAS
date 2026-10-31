@@ -1,6 +1,28 @@
 #ifndef BML_PHYSICS_RT_H
 #define BML_PHYSICS_RT_H
 
+#if defined(__APPLE__)
+
+// Native builds consume the real physics ABI.  The remainder of this file is
+// the verified 32-bit Windows layout and must never be used on arm64.
+#include <CKIpionManager.h>
+inline void InitPhysicsAddresses() {}
+extern "C" int TT_PhysicsSetSolverMode(int mode);
+extern "C" int TT_PhysicsGetSolverMode();
+extern "C" int TT_PhysicsArmClockResetOnNextObject(CKBaseManager *manager);
+inline bool PhysicsRuntimeSetSolverMode(bool preciseX87) {
+    return TT_PhysicsSetSolverMode(preciseX87 ? 1 : 0) != 0;
+}
+inline bool PhysicsRuntimeGetSolverMode(bool &preciseX87) {
+    preciseX87 = TT_PhysicsGetSolverMode() != 0;
+    return true;
+}
+inline bool PhysicsRuntimeArmClockResetOnNextObject(CKIpionManager *manager) {
+    return TT_PhysicsArmClockResetOnNextObject(manager) != 0;
+}
+
+#else
+
 #include <cstddef>
 #include <cstdint>
 
@@ -1350,5 +1372,51 @@ static_assert(offsetof(CKIpionManager, m_PhysicsObjects) == 0x110, "CKIpionManag
 static_assert(sizeof(CKIpionManager) == 0x2CF0, "CKIpionManager layout mismatch");
 
 void InitPhysicsAddresses();
+
+// Optional semantic bridge exported by the reverse-source physics_RT.  The
+// retail 32-bit DLL has no such API and continues to use the verified binary
+// layout above.
+struct PhysicsRuntimeLevelBaseline {
+    float timeFactor;
+    short nextMovementCheck;
+    short reserved;
+    int randomSeed;
+};
+
+struct PhysicsRuntimeCoreState {
+    int movementState;
+    int reserved;
+    double timeOfLastPsi;
+    double position[4];
+    float speed[4];
+    float rotSpeed[4];
+    float speedChange[4];
+    float rotSpeedChange[4];
+    float deltaPosition[4];
+    double quaternionLast[4];
+    double quaternionNext[4];
+};
+
+bool PhysicsRuntimeBridgeActive();
+bool PhysicsRuntimeResetForTas(CKIpionManager *manager, float deltaTimeMs);
+bool PhysicsRuntimeArmClockResetOnNextObject(CKIpionManager *manager);
+bool PhysicsRuntimeCaptureLevelBaseline(
+    CKIpionManager *manager, PhysicsRuntimeLevelBaseline &baseline);
+bool PhysicsRuntimeRestoreLevelBaseline(
+    CKIpionManager *manager, const PhysicsRuntimeLevelBaseline &baseline);
+bool PhysicsRuntimeSetTimeFactor(CKIpionManager *manager, float factor);
+bool PhysicsRuntimeGetTiming(
+    CKIpionManager *manager, float *timeFactor, float *deltaTimeMs,
+    float *physicsDeltaSeconds, float *psiSeconds, double *simulationSeconds);
+bool PhysicsRuntimeGetObjectState(
+    PhysicsObject *object, VxVector *position, VxVector *angles,
+    VxVector *velocity, VxVector *angularVelocity, bool *sleeping);
+bool PhysicsRuntimeGetCoreState(PhysicsObject *object, PhysicsRuntimeCoreState &state);
+// Runtime-selectable solver arithmetic.  Native builds default to fast host
+// floating point; TAS sessions request x87-compatible arithmetic.
+bool PhysicsRuntimeSetSolverMode(bool preciseX87);
+bool PhysicsRuntimeGetSolverMode(bool &preciseX87);
+
+#endif // __APPLE__
 
 #endif // BML_PHYSICS_RT_H

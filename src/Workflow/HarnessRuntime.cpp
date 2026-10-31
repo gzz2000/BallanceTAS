@@ -1,10 +1,16 @@
 #include "HarnessRuntime.h"
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <Windows.h>
+#else
+#include <cstdlib>
+#include <unistd.h>
+#endif
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -19,6 +25,7 @@
 
 namespace {
 std::string GetEnvironment(const char *name) {
+#ifdef _WIN32
     const DWORD length = ::GetEnvironmentVariableA(name, nullptr, 0);
     if (length == 0) return {};
 
@@ -27,6 +34,10 @@ std::string GetEnvironment(const char *name) {
     if (written == 0 || written >= length) return {};
     value.resize(written);
     return value;
+#else
+    const char *value = std::getenv(name);
+    return value ? value : "";
+#endif
 }
 
 bool ReadTextFile(const std::string &path, std::string &text) {
@@ -133,7 +144,12 @@ bool HarnessRuntime::WriteResult(bool passed, const std::string &message) {
         return false;
     }
 
-    const std::string temporary = m_ResultPath + ".tmp." + std::to_string(::GetCurrentProcessId());
+#ifdef _WIN32
+    const auto processId = ::GetCurrentProcessId();
+#else
+    const auto processId = ::getpid();
+#endif
+    const std::string temporary = m_ResultPath + ".tmp." + std::to_string(processId);
     {
         std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
         if (!output) {
@@ -144,15 +160,28 @@ bool HarnessRuntime::WriteResult(bool passed, const std::string &message) {
         output.flush();
         if (!output) {
             output.close();
-            ::DeleteFileA(temporary.c_str());
+            std::error_code removeError;
+            std::filesystem::remove(temporary, removeError);
             return false;
         }
     }
 
-    if (!::MoveFileExA(temporary.c_str(), m_ResultPath.c_str(),
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+#ifdef _WIN32
+    const bool published = ::MoveFileExA(temporary.c_str(), m_ResultPath.c_str(),
+                                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+#else
+    std::error_code publishError;
+    std::filesystem::rename(temporary, m_ResultPath, publishError);
+    const bool published = !publishError;
+#endif
+    if (!published) {
+#ifdef _WIN32
         Log::Error("Failed to publish harness result: %lu", ::GetLastError());
-        ::DeleteFileA(temporary.c_str());
+#else
+        Log::Error("Failed to publish harness result: %s", publishError.message().c_str());
+#endif
+        std::error_code removeError;
+        std::filesystem::remove(temporary, removeError);
         return false;
     }
     return true;

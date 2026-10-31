@@ -4,7 +4,9 @@
 
 #include "Logger.h"
 #include "GameInterface.h"
+#if TAS_ENABLE_LEGACY_MENU
 #include "TASMenu.h"
+#endif
 #include "InGameOSD.h"
 #include "TASEngine.h"
 
@@ -27,6 +29,8 @@ bool UIManager::Initialize() {
 
     Log::Info("Initializing UIManager...");
 
+    // Pages use BML's composed routes on both native macOS and Windows.
+#if TAS_ENABLE_LEGACY_MENU
     // Create and initialize TAS menu
     try {
         m_TASMenu = std::make_unique<TASMenu>(m_Engine);
@@ -36,6 +40,7 @@ bool UIManager::Initialize() {
         Log::Error("Failed to initialize TAS Menu: %s", e.what());
         return false;
     }
+#endif
 
     // Create and initialize In-Game OSD
     try {
@@ -65,10 +70,12 @@ void UIManager::Shutdown() {
         m_InGameOSD.reset();
     }
 
+#if TAS_ENABLE_LEGACY_MENU
     if (m_TASMenu) {
         m_TASMenu->Shutdown();
         m_TASMenu.reset();
     }
+#endif
 
     m_Initialized = false;
 
@@ -109,9 +116,11 @@ void UIManager::Render() {
     Bui::ImGuiContextScope scope;
 
     // Render TAS menu
+#if TAS_ENABLE_LEGACY_MENU
     if (m_TASMenu) {
         m_TASMenu->Render();
     }
+#endif
 
     // Render OSD
     if (m_InGameOSD) {
@@ -120,21 +129,29 @@ void UIManager::Render() {
 }
 
 void UIManager::OpenTASMenu() {
+#if !TAS_ENABLE_LEGACY_MENU
+    return;
+#else
     if (!m_TASMenu || m_Engine->GetGameInterface()->IsIngame()) return;
 
     m_TASMenu->Open("TAS Projects");
     if (m_Engine) {
         Log::Info("TAS Menu opened.");
     }
+#endif
 }
 
 void UIManager::CloseTASMenu() {
+#if !TAS_ENABLE_LEGACY_MENU
+    return;
+#else
     if (!m_TASMenu) return;
 
     m_TASMenu->Close();
     if (m_Engine) {
         Log::Info("TAS Menu closed.");
     }
+#endif
 }
 
 void UIManager::ToggleTASMenu() {
@@ -146,7 +163,11 @@ void UIManager::ToggleTASMenu() {
 }
 
 bool UIManager::IsTASMenuOpen() const {
+#if !TAS_ENABLE_LEGACY_MENU
+    return false;
+#else
     return m_TASMenu && m_TASMenu->IsOpen();
+#endif
 }
 
 // === Recording Control ===

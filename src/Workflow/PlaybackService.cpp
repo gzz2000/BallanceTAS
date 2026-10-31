@@ -24,7 +24,57 @@
 
 #include <CKInputManager.h>
 #include <CKTimeManager.h>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+namespace {
+void TraceRecordPhase(const char *phase, size_t logicalTick,
+                      RecordPlayer *recordPlayer, GameInterface *game,
+                      CKInputManager *inputManager) {
+    const char *path = std::getenv("BALLANCE_TAS_PHASE_TRACE");
+    if (!path || !*path || (logicalTick >= 160 && (logicalTick < 920 || logicalTick > 950))) {
+        return;
+    }
+    FILE *stream = std::fopen(path, "a");
+    if (!stream) {
+        return;
+    }
+    CKTimeManager *time = game ? game->GetTimeManager() : nullptr;
+    CK3dEntity *ball = game ? game->GetActiveBall() : nullptr;
+    const bool physical = game && ball && game->GetPhysicsObject(ball);
+    VxVector position{};
+    if (ball) {
+        ball->GetPosition(&position);
+    }
+    const unsigned char *keys = inputManager ? inputManager->GetKeyboardState() : nullptr;
+    std::fprintf(stream,
+                 "%s host=%u logical=%zu record=%zu dt=%.9g score=%.9g "
+                 "ball=%u physical=%d pos=(%.9g %.9g %.9g) keys=(%u %u %u %u)\n",
+                 phase, time ? static_cast<unsigned>(time->GetMainTickCount()) : 0u,
+                 logicalTick, recordPlayer ? recordPlayer->GetCurrentFrame() : 0u,
+                 time ? time->GetLastDeltaTime() : 0.0f,
+                 game ? game->GetSRScore() : 0.0f,
+                 ball ? static_cast<unsigned>(ball->GetID()) : 0u, physical ? 1 : 0,
+                 position.x, position.y, position.z,
+                 keys ? static_cast<unsigned>(keys[CKKEY_UP]) : 0u,
+                 keys ? static_cast<unsigned>(keys[CKKEY_DOWN]) : 0u,
+                 keys ? static_cast<unsigned>(keys[CKKEY_LEFT]) : 0u,
+                 keys ? static_cast<unsigned>(keys[CKKEY_RIGHT]) : 0u);
+    std::fclose(stream);
+}
+
+void SetHostFastForward(bool enabled) {
+#ifdef _WIN32
+    _putenv_s("BALLANCE_FAST_FORWARD_ACTIVE", enabled ? "1" : "");
+#else
+    if (enabled)
+        setenv("BALLANCE_FAST_FORWARD_ACTIVE", "1", 1);
+    else
+        unsetenv("BALLANCE_FAST_FORWARD_ACTIVE");
+#endif
+}
+}
 
 static std::string ResolvePlaybackLevelName(const TASProject *project, GameInterface *game) {
     if (!project) {
@@ -76,6 +126,8 @@ Result<void> PlaybackService::PreparePlayback(TASProject *project, PlaybackType 
         return Result<void>::Error("Invalid playback type", "playback_service");
     }
     if (type == PlaybackType::Record) {
+        // Startup autoplay can prepare while original resources are loading.
+        // Readiness is required at activation, before record samples run.
         if (!project->IsRecordProject()) {
             return Result<void>::Error("Project is not a record", "playback_service");
         }
@@ -124,6 +176,16 @@ Result<void> PlaybackService::ActivatePlayback() {
     m_IsPaused = false;
     m_CurrentTick = 0;
     m_CompletionSignaled = false;
+    // E487 diagnostic only: test an activation/input-phase discrepancy against
+    // complete original traces. Skipping input zero is not a loading contract.
+    const char *inputLead = std::getenv("BALLANCE_TAS_DIAG_INPUT_LEAD");
+    if (m_Type == PlaybackType::Record && inputLead &&
+        std::strcmp(inputLead, "1") == 0 && m_RecordPlayer->Seek(1)) {
+        m_CurrentTick = 1;
+        Log::Info("Diagnostic input origin: starting at record 1.");
+    }
+    if (m_Type == PlaybackType::Record)
+        SetHostFastForward(true);
 
     Log::Info("PlaybackService: %s playback activated for '%s'.",
               m_Type == PlaybackType::Script ? "Script" : "Record",
@@ -132,6 +194,7 @@ Result<void> PlaybackService::ActivatePlayback() {
 }
 
 Result<void> PlaybackService::StopPlaybackGraceful(bool clearProject) {
+    SetHostFastForward(false);
     if (!m_IsPlaying && !m_IsPrepared) {
         return Result<void>::Error("Not playing", "playback_service");
     }
@@ -184,6 +247,7 @@ Result<void> PlaybackService::StopPlaybackGraceful(bool clearProject) {
 }
 
 void PlaybackService::StopPlaybackImmediate() {
+    SetHostFastForward(false);
     RemoveHookCallbacks();
     if (m_FrameTime) {
         m_FrameTime->End();
@@ -250,6 +314,21 @@ void PlaybackService::Resume() {
     Log::Info("PlaybackService: Resumed.");
 }
 
+bool PlaybackService::RewindRecordTo(size_t tick) {
+    if (!m_IsPlaying || m_Type != PlaybackType::Record || !m_RecordPlayer)
+        return false;
+    auto *input = m_InputAccess ? m_InputAccess->GetInputManager() : nullptr;
+    if (!input || !input->GetKeyboardState())
+        return false;
+    if (!m_RecordPlayer->Seek(tick))
+        return false;
+    if (!m_RecordPlayer->RestoreConsumedFrameInput(input->GetKeyboardState()))
+        return false;
+    m_CurrentTick = tick;
+    m_CompletionSignaled = false;
+    return true;
+}
+
 float PlaybackService::GetProgress() const {
     if (!m_IsPlaying) {
         return 0.0f;
@@ -298,6 +377,8 @@ Result<void> PlaybackService::ActivateScriptPlayback() {
 }
 
 Result<void> PlaybackService::ActivateRecordPlayback() {
+    const auto preloadError = m_GameControl->GetLegacyPreloadError();
+    if (!preloadError.empty()) return Result<void>::Error(preloadError, "playback_service");
     if (!m_CurrentProject) {
         return Result<void>::Error("No project set", "playback_service");
     }
@@ -388,7 +469,11 @@ void PlaybackService::InstallRecordCallbacks() {
                 return;
             }
             if (m_RecordPlayer->IsPlaying()) {
+                TraceRecordPhase("post-time-pre", m_CurrentTick, m_RecordPlayer,
+                                 m_ServiceProvider->Resolve<GameInterface>(), nullptr);
                 tm->SetLastDeltaTime(m_RecordPlayer->GetFrameDeltaTime(m_CurrentTick));
+                TraceRecordPhase("post-time-post", m_CurrentTick, m_RecordPlayer,
+                                 m_ServiceProvider->Resolve<GameInterface>(), nullptr);
             }
         });
 
@@ -398,8 +483,16 @@ void PlaybackService::InstallRecordCallbacks() {
                 return;
             }
 
+            auto *game = m_ServiceProvider->Resolve<GameInterface>();
+            TraceRecordPhase("post-input-enter", m_CurrentTick, m_RecordPlayer, game, im);
+
+            // A record owns the input sequence from level-load activation onward.
+            // Consume each sample once, including while the ball is not physical.
+            // Waiting for a particular ball state and then seeking over samples
+            // changes the recording's clock/input contract.
             if (m_RecordPlayer->IsPlaying()) {
                 m_RecordPlayer->Tick(m_CurrentTick, im->GetKeyboardState());
+                TraceRecordPhase("post-input-applied", m_CurrentTick, m_RecordPlayer, game, im);
                 ++m_CurrentTick;
             }
 

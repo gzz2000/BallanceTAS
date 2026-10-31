@@ -186,15 +186,35 @@ void RecordPlayer::Tick(size_t currentTick, unsigned char *keyboardState) {
         return;
     }
 
-    const RecordFrameData idleFrame{};
-    const RecordFrameData &nextFrame =
-        (m_CurrentFrame + 1 < m_TotalFrames) ? m_Frames[m_CurrentFrame + 1] : idleFrame;
-
-    // Apply input for the current frame
-    ApplyFrameInput(m_Frames[m_CurrentFrame], nextFrame, keyboardState);
+    ApplyCurrentFrame(keyboardState);
 
     // Advance to next frame
     m_CurrentFrame++;
+}
+
+void RecordPlayer::ApplyCurrentFrame(unsigned char *keyboardState) const {
+    if (!m_IsPlaying || m_IsPaused || m_CurrentFrame >= m_TotalFrames ||
+        m_Frames.size() <= m_CurrentFrame) {
+        return;
+    }
+
+    const RecordFrameData idleFrame{};
+    const RecordFrameData &nextFrame =
+        (m_CurrentFrame + 1 < m_TotalFrames) ? m_Frames[m_CurrentFrame + 1] : idleFrame;
+    ApplyFrameInput(m_Frames[m_CurrentFrame], nextFrame, keyboardState);
+}
+
+bool RecordPlayer::RestoreConsumedFrameInput(unsigned char *keyboardState) const {
+    if (!m_IsPlaying || !keyboardState || m_CurrentFrame >= m_TotalFrames ||
+        m_CurrentFrame >= m_Frames.size())
+        return false;
+    // Tick applies frame N-1 and then advances the cursor to N. Reproduce both
+    // pressed and legacy release bits, leaving the next sample unconsumed.
+    const RecordFrameData idleFrame{};
+    const RecordFrameData &consumed = m_CurrentFrame
+        ? m_Frames[m_CurrentFrame - 1] : idleFrame;
+    ApplyFrameInput(consumed, m_Frames[m_CurrentFrame], keyboardState);
+    return true;
 }
 
 float RecordPlayer::GetFrameDeltaTime(size_t currentTick) const {

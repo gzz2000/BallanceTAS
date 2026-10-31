@@ -303,6 +303,13 @@ public:
      * Should be called from the InputManager hook.
      */
     void Tick(size_t currentTick, unsigned char *keyboardState);
+    /// Apply the current legacy record frame without advancing its cursor.
+    /// Used while a platform-specific level loader takes more simulation
+    /// samples than the Windows player that produced the record.
+    void ApplyCurrentFrame(unsigned char *keyboardState) const;
+    /// Restore the input latch at a post-tick checkpoint without consuming input.
+    /// The cursor denotes the next sample; paused playback is also supported.
+    bool RestoreConsumedFrameInput(unsigned char *keyboardState) const;
 
     /**
      * @brief Checks if a record is currently playing.

@@ -5,7 +5,9 @@
 #include <utility>
 #include <type_traits>
 
+#ifdef _WIN32
 #include "MinHook.h"
+#endif
 
 //--------------------------------------------------------------------------
 // FunctionTraits: Deduces the return type and argument list of a callable.

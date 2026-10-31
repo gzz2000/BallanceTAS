@@ -59,7 +59,7 @@ static int VxColorRGBA(lua_State *L) {
 
 static int VxColorSetRGBA(lua_State *L) {
     auto *color = CheckVxColor(L, 1);
-    color->Set(static_cast<unsigned long>(luaL_checkinteger(L, 2)));
+    color->Set(static_cast<XDWORD>(luaL_checkinteger(L, 2)));
     return 0;
 }
 
@@ -77,7 +77,7 @@ static int VxColorRed(lua_State *L) {
 
 static int VxColorSetRed(lua_State *L) {
     auto *color = CheckVxColor(L, 1);
-    color->Set(ColorSetRed(color->GetRGBA(), static_cast<unsigned long>(luaL_checkinteger(L, 2))));
+    color->Set(static_cast<XDWORD>(ColorSetRed(color->GetRGBA(), static_cast<XDWORD>(luaL_checkinteger(L, 2)))));
     return 0;
 }
 
@@ -89,7 +89,7 @@ static int VxColorGreen(lua_State *L) {
 
 static int VxColorSetGreen(lua_State *L) {
     auto *color = CheckVxColor(L, 1);
-    color->Set(ColorSetGreen(color->GetRGBA(), static_cast<unsigned long>(luaL_checkinteger(L, 2))));
+    color->Set(static_cast<XDWORD>(ColorSetGreen(color->GetRGBA(), static_cast<XDWORD>(luaL_checkinteger(L, 2)))));
     return 0;
 }
 
@@ -101,7 +101,7 @@ static int VxColorBlue(lua_State *L) {
 
 static int VxColorSetBlue(lua_State *L) {
     auto *color = CheckVxColor(L, 1);
-    color->Set(ColorSetBlue(color->GetRGBA(), static_cast<unsigned long>(luaL_checkinteger(L, 2))));
+    color->Set(static_cast<XDWORD>(ColorSetBlue(color->GetRGBA(), static_cast<XDWORD>(luaL_checkinteger(L, 2)))));
     return 0;
 }
 
@@ -113,7 +113,7 @@ static int VxColorAlpha(lua_State *L) {
 
 static int VxColorSetAlpha(lua_State *L) {
     auto *color = CheckVxColor(L, 1);
-    color->Set(ColorSetAlpha(color->GetRGBA(), static_cast<unsigned long>(luaL_checkinteger(L, 2))));
+    color->Set(static_cast<XDWORD>(ColorSetAlpha(color->GetRGBA(), static_cast<XDWORD>(luaL_checkinteger(L, 2)))));
     return 0;
 }
 

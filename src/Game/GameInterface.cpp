@@ -61,7 +61,8 @@ GameInterface::GameInterface(BallanceTAS *mod) : m_Mod(mod) {
         throw std::runtime_error("GameInterface requires a valid CKTimeManager instance.");
     }
 
-    m_InputManager = m_BML->GetInputManager();
+    m_InputManager = static_cast<CKInputManager *>(
+        m_CKContext->GetManagerByGuid(INPUT_MANAGER_GUID));
     if (!m_InputManager) {
         throw std::runtime_error("GameInterface requires a valid CKInputManager instance.");
     }
@@ -78,6 +79,10 @@ GameInterface::GameInterface(BallanceTAS *mod) : m_Mod(mod) {
 
 UIManager *GameInterface::GetUIManager() const {
     return m_Mod->GetUIManager();
+}
+
+std::string GameInterface::GetLegacyPreloadError() const {
+    return m_Mod->GetLegacyPreloadError();
 }
 
 // ========================================
@@ -109,6 +114,21 @@ void GameInterface::ResetPhysicsTime() {
 
 void GameInterface::ResetPhysicsTime(float deltaTimeMs) {
     // Reset physics time in order to sync with TAS records
+#if !defined(__APPLE__)
+    if (PhysicsRuntimeBridgeActive() && m_TimeManager) {
+        // The retail SDK header has no recovered Player-only fixed-clock
+        // accessors.  The semantic physics trace records the effective delta
+        // below, which is what matters for the reverse runtime.
+        Log::Info("Reverse physics bridge timing: last delta %.9g ms.",
+                  m_TimeManager->GetLastDeltaTime());
+    }
+#endif
+#ifdef __APPLE__
+    m_IpionManager->ResetSimulationClock();
+#else
+    if (PhysicsRuntimeBridgeActive()) {
+        PhysicsRuntimeResetForTas(m_IpionManager, deltaTimeMs);
+    } else {
     // IVP_Environment
     auto *env = m_IpionManager->GetEnvironment();
 
@@ -135,19 +155,54 @@ void GameInterface::ResetPhysicsTime(float deltaTimeMs) {
     Log::Info("time_of_next_psi: %f", time_of_next_psi);
 #endif
     time_of_next_psi = time_of_last_psi + 1.0 / 66;
+    }
+#endif
 
     if (m_TimeManager) {
         m_TimeManager->SetLastDeltaTime(deltaTimeMs);
     }
-    m_IpionManager->SetDeltaTime(deltaTimeMs);
+#ifdef __APPLE__
+    // A canonical TAS reset starts with the record's fixed sample, including
+    // its smoothing history. Blending with the menu delta leaves a permanent
+    // clock phase error when a 132/240 Hz record follows the 264 Hz menu.
+    // Match TT_PhysicsResetForTas; ordinary frame updates still use smoothing.
+    m_IpionManager->SetDeltaTimeImmediate(deltaTimeMs);
+#else
+    if (!PhysicsRuntimeBridgeActive())
+        m_IpionManager->SetDeltaTime(deltaTimeMs);
+#endif
+}
+
+void GameInterface::SetHostPhysicsTimeScale(float scale) {
+#ifdef __APPLE__
+    if (m_TimeManager) {
+        m_TimeManager->SetFixedPhysicsTimeScale(scale);
+    }
+#else
+    (void) scale;
+#endif
 }
 
 PhysicsDeterminism::PhysicsLevelBaseline GameInterface::CapturePhysicsLevelBaseline() const {
     PhysicsDeterminism::PhysicsLevelBaseline baseline;
+#ifdef __APPLE__
     baseline.timeFactor = m_IpionManager->GetPhysicsTimeFactor();
-    if (auto *env = m_IpionManager->GetEnvironment()) {
-        baseline.nextMovementCheck = env->next_movement_check;
+    baseline.nextMovementCheck = m_IpionManager->GetNextMovementCheck();
+#else
+    if (PhysicsRuntimeBridgeActive()) {
+        PhysicsRuntimeLevelBaseline runtime = {};
+        if (PhysicsRuntimeCaptureLevelBaseline(m_IpionManager, runtime)) {
+            baseline.timeFactor = runtime.timeFactor;
+            baseline.nextMovementCheck = runtime.nextMovementCheck;
+            baseline.randomSeed = runtime.randomSeed;
+            return baseline;
+        }
+    } else {
+        baseline.timeFactor = m_IpionManager->GetPhysicsTimeFactor();
+        if (auto *env = m_IpionManager->GetEnvironment())
+            baseline.nextMovementCheck = env->next_movement_check;
     }
+#endif
     baseline.randomSeed = ivp_srand_read();
     return baseline;
 }
@@ -227,15 +282,32 @@ void GameInterface::TurnOffNavigation(bool ballNav, bool camNav) {
 }
 
 void GameInterface::RestorePhysicsLevelBaseline(const PhysicsDeterminism::PhysicsLevelBaseline &baseline) {
-    m_IpionManager->SetPhysicsTimeFactor(baseline.timeFactor);
-    if (auto *env = m_IpionManager->GetEnvironment()) {
-        env->next_movement_check = baseline.nextMovementCheck;
+#if !defined(__APPLE__)
+    if (PhysicsRuntimeBridgeActive()) {
+        const PhysicsRuntimeLevelBaseline runtime{
+            baseline.timeFactor, baseline.nextMovementCheck, 0, baseline.randomSeed};
+        PhysicsRuntimeRestoreLevelBaseline(m_IpionManager, runtime);
+        return;
     }
+#endif
+    m_IpionManager->SetPhysicsTimeFactor(baseline.timeFactor);
+#ifdef __APPLE__
+    m_IpionManager->SetNextMovementCheck(baseline.nextMovementCheck);
+#else
+    if (auto *env = m_IpionManager->GetEnvironment())
+        env->next_movement_check = baseline.nextMovementCheck;
+#endif
     ivp_srand(baseline.randomSeed);
 }
 
 void GameInterface::SetPhysicsTimeFactor(float factor) {
     // Reset physics time factor in case it was changed
+#if !defined(__APPLE__)
+    if (PhysicsRuntimeBridgeActive()) {
+        PhysicsRuntimeSetTimeFactor(m_IpionManager, factor * 0.001f);
+        return;
+    }
+#endif
     m_IpionManager->SetPhysicsTimeFactor(factor * 0.001f);
 }
 
@@ -313,7 +385,31 @@ CK3dEntity *GameInterface::GetObjectByID(int id) const {
 }
 
 PhysicsObject *GameInterface::GetPhysicsObject(CK3dEntity *entity) const {
-    return m_IpionManager ? m_IpionManager->GetPhysicsObject(entity) : nullptr;
+    PhysicsObject *object = m_IpionManager ? m_IpionManager->GetPhysicsObject(entity) : nullptr;
+    static bool timingLogged = false;
+    if (object && !timingLogged) {
+        timingLogged = true;
+#ifdef __APPLE__
+        Log::Info("Physics timing at first TAS object: factor %.9g, delta %.9g ms, "
+                  "submitted %.9g s, PSI %.9g s, simulation %.12g s.",
+                  m_IpionManager->GetPhysicsTimeFactor(), m_IpionManager->GetDeltaTime(),
+                  m_IpionManager->GetPhysicsDeltaTime(),
+                  m_IpionManager->GetSimulationTimeStep(),
+                  m_IpionManager->GetSimulationTime().get_time());
+#else
+        if (PhysicsRuntimeBridgeActive()) {
+            float factor = 0.0f, delta = 0.0f, submitted = 0.0f, psi = 0.0f;
+            double simulation = 0.0;
+            if (PhysicsRuntimeGetTiming(m_IpionManager, &factor, &delta, &submitted,
+                                        &psi, &simulation)) {
+                Log::Info("Physics timing at first TAS object: factor %.9g, delta %.9g ms, "
+                          "submitted %.9g s, PSI %.9g s, simulation %.12g s.",
+                          factor, delta, submitted, psi, simulation);
+            }
+        }
+#endif
+    }
+    return object;
 }
 
 // ========================================
@@ -366,6 +462,14 @@ bool GameInterface::IsSleeping(CK3dEntity *obj) const {
     // We may need to use the older `CKIpionManager::GetPhysicsObject` to access the concrete type.
     PhysicsObject *ipionObj = m_IpionManager->GetPhysicsObject(obj);
     if (!ipionObj) return false;
+
+#if !defined(__APPLE__)
+    if (PhysicsRuntimeBridgeActive()) {
+        bool sleeping = false;
+        return PhysicsRuntimeGetObjectState(
+            ipionObj, nullptr, nullptr, nullptr, nullptr, &sleeping) && sleeping;
+    }
+#endif
 
     return ipionObj->m_RealObject->get_core()->movement_state >= IVP_MT_CALM;
 }
@@ -957,10 +1061,16 @@ void GameInterface::OnCloseMenu() {
         m_CKContext->GetCurrentScene()->Activate(beh, true);
     }
 
-    m_BML->AddTimerLoop(1ul, [this] {
-        if (m_InputManager->oIsKeyDown(CKKEY_ESCAPE) || m_InputManager->oIsKeyDown(CKKEY_RETURN))
+    m_BML->AddTimerLoop(static_cast<CKDWORD>(1), [this] {
+        if (m_InputManager->IsKeyDown(CKKEY_ESCAPE) || m_InputManager->IsKeyDown(CKKEY_RETURN))
             return true;
-        m_InputManager->Unblock(CK_INPUT_DEVICE_KEYBOARD);
+#ifndef __APPLE__
+        // The retail CKInputManager has no blocking facade. On Windows that
+        // state belongs to BML's InputHook; the native CK2 implementation also
+        // exposes compatible helpers directly on CKInputManager.
+        if (InputHook *input = m_BML->GetInputManager())
+            input->Unblock(CK_INPUT_DEVICE_KEYBOARD);
+#endif
         return false;
     });
 }

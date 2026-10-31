@@ -157,8 +157,12 @@ check_library_exists(edit readline "" HAVE_LIBEDIT)
 set(LUA_COMPILE_DEFINITIONS "")
 set(LUA_LINK_LIBRARIES "")
 
-# Platform-specific settings
-if (LUA_PLATFORM STREQUAL "linux")
+# Platform-specific settings. MSVC's CRT already provides the math routines;
+# a separate Unix-style libm does not exist on Windows.
+if (WIN32)
+    # Lua's headers select the Windows implementation from _WIN32.
+
+elseif (LUA_PLATFORM STREQUAL "linux")
     list(APPEND LUA_COMPILE_DEFINITIONS LUA_USE_LINUX)
     list(APPEND LUA_LINK_LIBRARIES $<$<BOOL:${HAVE_LIBDL}>:dl> $<$<BOOL:${HAVE_LIBM}>:m>)
 

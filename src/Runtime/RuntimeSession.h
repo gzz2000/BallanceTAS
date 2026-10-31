@@ -161,7 +161,7 @@ public:
     static const char *EventToString(Event event);
 
 private:
-    Result<void> Transition(Event event, StopOptions stopOptions = {});
+    Result<void> Transition(Event event, StopOptions stopOptions = StopOptions{false});
     Result<void> TransitionToState(State nextState, StopOptions stopOptions);
     State FindTransitionTarget(State state, Event event) const;
     void InitializeTransitionTable();
