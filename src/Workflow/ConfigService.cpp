@@ -131,7 +131,11 @@ void ConfigService::RegisterProperties(IConfig *config) {
     // --- OSD ---
     m_ShowOSD = config->GetProperty("OSD", "ShowOSD");
     m_ShowOSD->SetComment("Controls the visibility of the in-game On-Screen Display.");
+    #ifdef __EMSCRIPTEN__
+    m_ShowOSD->SetDefaultBoolean(false);
+#else
     m_ShowOSD->SetDefaultBoolean(true);
+#endif
 
     m_ShowOSDStatus = config->GetProperty("OSD", "ShowStatusPanel");
     m_ShowOSDStatus->SetComment("Show the status panel (TAS mode, playback frame, frame time, SR time, level)");
