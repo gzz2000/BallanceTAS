@@ -14,7 +14,6 @@
 #include "IGameQuery.h"
 #include "SavestateManager.h"
 #include "ServiceContainer.h"
-#include "TASConstants.h"
 #include "physics_RT.h"
 
 namespace fs = std::filesystem;
@@ -179,15 +178,17 @@ Result<SavestateData> SavestateData::FromJson(const std::string &json) {
 // SavestateManager Implementation
 // ============================================================================
 
-SavestateManager::SavestateManager(ServiceProvider &services)
+SavestateManager::SavestateManager(ServiceProvider &services, const std::string &directory)
     : m_Services(services),
-      m_CacheValid(false) {
-    // Keep runtime data under ModLoader\TAS; do not create a separate BallanceTAS directory.
-    m_SavestatesDir = TASConstants::DefaultBasePath;
+      m_CacheValid(false),
+      m_SavestatesDir(directory) {
+    // Share the engine's configured user-data root with recordings/scripts.
+    // A separate relative default bypasses --user-data-path on native hosts.
 
     // Create directory if it doesn't exist
     try {
         fs::create_directories(m_SavestatesDir);
+        Log::Info("Savestate directory: %s", m_SavestatesDir.c_str());
     } catch (const fs::filesystem_error &e) {
         Log::Error("Failed to create savestates directory: %s", e.what());
     }

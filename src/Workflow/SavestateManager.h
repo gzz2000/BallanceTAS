@@ -48,7 +48,7 @@ struct SavestateData {
  * @brief Manages game state saving and loading
  *
  * Provides savestate functionality for quick retries and experimentation.
- * Savestates are stored as JSON files in the savestates/ directory.
+ * Savestates are stored as JSON files in the configured TAS directory.
  *
  * Dependencies are resolved lazily via ServiceProvider (ISP narrow interfaces):
  *   IObjectProvider, IGameStateProvider, IGameQuery
@@ -57,7 +57,7 @@ struct SavestateData {
  */
 class SavestateManager {
 public:
-    explicit SavestateManager(ServiceProvider &services);
+    SavestateManager(ServiceProvider &services, const std::string &directory);
 
     ~SavestateManager() = default;
 

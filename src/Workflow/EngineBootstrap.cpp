@@ -302,7 +302,7 @@ bool EngineBootstrap::InitializeCoreSubsystems(TASEngine &engine) {
                 *engine.m_EventBus,
                 *engine.m_HookManager));
         c.RegisterSingletonInstance<SavestateManager>(
-            std::make_unique<SavestateManager>(engine.m_ServiceProvider));
+            std::make_unique<SavestateManager>(engine.m_ServiceProvider, engine.GetPath()));
 
         Log::Info("Core runtime subsystems initialized.");
         return true;
