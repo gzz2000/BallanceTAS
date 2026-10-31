@@ -1024,6 +1024,7 @@ void BallanceTAS::OnLoad() {
 }
 
 void BallanceTAS::OnUnload() {
+    m_ExplosionPolicy.Forget(); // CK world may already have been destroyed.
     // The host may have destroyed the world before unloading mods. Sampling
     // belongs to live Process/PreExitLevel callbacks, not final file cleanup.
     g_ScoreArrayTrace.Reset();
@@ -1216,14 +1217,8 @@ void BallanceTAS::OnUnphysicalize(CK3dEntity *target) {
 
 void BallanceTAS::OnLoadScript(const char *filename, CKBehavior *script) {
     BehaviorExecutionTrace::Install(script);
+    m_ExplosionPolicy.Register(script);
     if (m_Initialized && m_Engine) {
-        if (!strcmp(script->GetName(), "Ball_Explosion_Wood")
-            || !strcmp(script->GetName(), "Ball_Explosion_Paper")
-            || !strcmp(script->GetName(), "Ball_Explosion_Stone")) {
-            CKBehavior *beh = ScriptHelper::FindFirstBB(script, "Set Position");
-            ScriptHelper::DeleteBB(script, beh);
-        }
-
         if (!strcmp(script->GetName(), "Gameplay_Ingame")) {
             for (int i = 0; i < script->GetLocalParameterCount(); ++i) {
                 CKParameter *param = script->GetLocalParameter(i);
@@ -1457,6 +1452,7 @@ bool BallanceTAS::Initialize() {
 }
 
 void BallanceTAS::Shutdown() {
+    m_ExplosionPolicy.Apply(m_BML->GetCKContext(), false);
     if (!m_Initialized) {
         PhysicsRuntimeSetSolverMode(false);
         return;
@@ -1581,6 +1577,7 @@ void BallanceTAS::OnProcess() {
             m_Engine->IsPendingTranslate() ||
             (m_Engine->IsPaused() && m_Engine->GetPlaybackType() != PlaybackType::None));
         const bool precisePhysics = !ForceNativePhysicsForOracle() && tasTimeline;
+        m_ExplosionPolicy.Apply(m_BML->GetCKContext(), tasTimeline);
         if (tasTimeline && !SetRecordedToolboxClock(m_BML, true)) {
             Log::Error("TAS requires a toolbox runtime with recorded-clock support.");
             Shutdown();

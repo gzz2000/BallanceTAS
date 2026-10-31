@@ -7,6 +7,7 @@
 #include "ConfigService.h"
 #include "HookManager.h"
 #include "LegacyPreloadSession.h"
+#include "ExplosionPolicy.h"
 
 // Forward-declare the core engine to avoid including its full header here.
 // This reduces compile times and keeps dependencies clean.
@@ -223,6 +224,7 @@ private:
 
     bool m_Initialized = false;
     LegacyPreloadSession m_LegacyPreload;
+    ExplosionPolicy m_ExplosionPolicy;
     bool m_GameHooksEnabled = false;
     // Whether the game's ball and camera control are on (BallNav / CamNav messages).
     bool m_BallNavActive = false;
