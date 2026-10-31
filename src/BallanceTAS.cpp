@@ -51,6 +51,12 @@
 #include "Diagnostics/PixelStateTrace.h"
 #include "Game/RecordedCounterBoundary.h"
 
+#ifdef __EMSCRIPTEN__
+static void RunWebCheckpointRequest(BallanceTAS *mod);
+static void InvalidateWebCheckpoint();
+extern "C" int BML_WebRequestCheckpoint(int action);
+extern "C" int BML_WebCheckpointResult();
+#endif
 static RecordedCounterBoundary g_RecordedCounterBoundary;
 static PixelStateTrace g_PixelStateTrace;
 
@@ -104,8 +110,15 @@ bool ForceNativePhysicsForOracle() {
 #ifdef TAS_SOURCE_ENGINE
 using PracticeAction = int (*)();
 
+#ifdef TAS_STATIC_PRACTICE
+extern "C" int BML_PracticeCaptureState();
+extern "C" int BML_PracticeRestoreState();
+#endif
 PracticeAction ResolvePracticeAction(const char *symbol) {
-#ifdef __APPLE__
+#ifdef TAS_STATIC_PRACTICE
+    if (std::strcmp(symbol,"BML_PracticeCaptureState")==0) return &BML_PracticeCaptureState;
+    if (std::strcmp(symbol,"BML_PracticeRestoreState")==0) return &BML_PracticeRestoreState;
+#elif defined(__APPLE__)
     for (uint32_t i = 0; i < _dyld_image_count(); ++i) {
         const char *image = _dyld_get_image_name(i);
         if (!image || !std::strstr(image, "PracticeTools.bmodp"))
@@ -155,7 +168,17 @@ RegressionCoreState CaptureRegressionCore(GameInterface *game) {
 }
 
 bool SameRegressionCore(const RegressionCoreState &a, const RegressionCoreState &b) {
-    return std::memcmp(&a, &b, sizeof(a)) == 0;
+    // The tail after ballValid contains padding, not simulation state. Comparing
+    // the whole struct spuriously failed when a different allocator/stack user
+    // left other bytes there. Preserve bitwise comparison of every float field.
+    const bool equal = std::memcmp(a.position, b.position, sizeof(a.position)) == 0 &&
+        std::memcmp(a.angles, b.angles, sizeof(a.angles)) == 0 &&
+        std::memcmp(a.velocity, b.velocity, sizeof(a.velocity)) == 0 &&
+        std::memcmp(a.angularVelocity, b.angularVelocity, sizeof(a.angularVelocity)) == 0 &&
+        a.points == b.points && a.lives == b.lives && a.sector == b.sector && a.ballValid == b.ballValid;
+    if (equal && std::getenv("BALLANCE_SNAPSHOT_AUDIT") && std::memcmp(&a, &b, sizeof(a)) != 0)
+        Log::Info("Snapshot core fields match; object padding differs.");
+    return equal;
 }
 
 void RunTasStateTrace(BallanceTAS *mod) {
@@ -567,7 +590,15 @@ void RunSnapshotSequenceAudit(BallanceTAS *mod) {
     }
     if (action.kind == 's') {
         PracticeAction capture = ResolvePracticeAction("BML_PracticeCaptureState");
-        if (!capture || !capture()) {
+        bool captured = false;
+#ifdef __EMSCRIPTEN__
+        if (std::getenv("BALLANCE_TEST_WEB_CHECKPOINTS")) {
+            if (BML_WebRequestCheckpoint(1)) RunWebCheckpointRequest(mod);
+            captured = BML_WebCheckpointResult() == 1;
+        } else
+#endif
+            captured = capture && capture();
+        if (!captured) {
             Log::Error("Snapshot sequence capture failed action=%zu tick=%zu.", next, tick);
             failed = true;
             return;
@@ -608,7 +639,15 @@ void RunSnapshotSequenceAudit(BallanceTAS *mod) {
                     unsigned(owner.id), int(owner.cid), owner.name.c_str());
         }
         PracticeAction restore = ResolvePracticeAction("BML_PracticeRestoreState");
-        if (!hasSave || !restore || !restore() || !playback->RewindRecordTo(savedTick)) {
+        bool restored = false;
+#ifdef __EMSCRIPTEN__
+        if (hasSave && std::getenv("BALLANCE_TEST_WEB_CHECKPOINTS")) {
+            if (BML_WebRequestCheckpoint(2)) RunWebCheckpointRequest(mod);
+            restored = BML_WebCheckpointResult() == 2 && playback->GetCurrentTick() == savedTick;
+        } else
+#endif
+            restored = hasSave && restore && restore() && playback->RewindRecordTo(savedTick);
+        if (!restored) {
             Log::Error("Snapshot sequence restore failed action=%zu tick=%zu.", next, tick);
             failed = true;
             return;
@@ -1030,6 +1069,9 @@ void BallanceTAS::OnLoad() {
 }
 
 void BallanceTAS::OnUnload() {
+#ifdef __EMSCRIPTEN__
+    InvalidateWebCheckpoint();
+#endif
     m_ExplosionPolicy.Forget(); // CK world may already have been destroyed.
     // The host may have destroyed the world before unloading mods. Sampling
     // belongs to live Process/PreExitLevel callbacks, not final file cleanup.
@@ -1458,6 +1500,9 @@ bool BallanceTAS::Initialize() {
 }
 
 void BallanceTAS::Shutdown() {
+#ifdef __EMSCRIPTEN__
+    InvalidateWebCheckpoint();
+#endif
     m_ExplosionPolicy.Apply(m_BML->GetCKContext(), false);
     if (!m_Initialized) {
         PhysicsRuntimeSetSolverMode(false);
@@ -1622,6 +1667,9 @@ void BallanceTAS::OnProcess() {
         if (m_PlayerHostBridge) {
             m_PlayerHostBridge->Tick();
         }
+#ifdef __EMSCRIPTEN__
+        RunWebCheckpointRequest(this);
+#endif
 #ifdef TAS_SOURCE_ENGINE
         RunSnapshotSequenceAudit(this);
         RunSnapshotTasAudit(this);
@@ -1731,6 +1779,9 @@ void BallanceTAS::OnExitGame() {
 }
 
 void BallanceTAS::OnPreLoadLevel() {
+#ifdef __EMSCRIPTEN__
+    InvalidateWebCheckpoint();
+#endif
     g_ScoreArrayTrace.Reset();
     BehaviorExecutionTrace::objectLookup = [this](CK_ID id) { return m_BML->GetCKContext()->GetObject(id); };
     BehaviorExecutionTrace::Arm(m_BML->GetTimeManager(), m_BML->GetScriptByName("Default Level"));
@@ -1778,6 +1829,9 @@ void BallanceTAS::OnStartLevel() {
 }
 
 void BallanceTAS::OnPreResetLevel() {
+#ifdef __EMSCRIPTEN__
+    InvalidateWebCheckpoint();
+#endif
     if (m_Initialized && m_Engine && !m_Engine->IsShuttingDown()) {
         m_Engine->GetGameInterface()->SetLevelCompleted(false);
         PublishEngineEvent(this, PreResetLevelEvent{});
@@ -1791,6 +1845,9 @@ FORWARD_SIMPLE_EVENT(OnPauseLevel,      PauseLevelEvent)
 FORWARD_SIMPLE_EVENT(OnUnpauseLevel,    UnpauseLevelEvent)
 
 void BallanceTAS::OnPreExitLevel() {
+#ifdef __EMSCRIPTEN__
+    InvalidateWebCheckpoint();
+#endif
     g_ScoreArrayTrace.End(m_BML);
     SetRecordedToolboxClock(m_BML, false);
     if (m_GameInterface) {
@@ -1915,3 +1972,7 @@ void BallanceTAS::OnPostLifeUp() {
         PublishEngineEvent(this, PostLifeUpEvent{lifeCount});
     }
 }
+
+#ifdef __EMSCRIPTEN__
+#include "Workflow/WebRecordEditor.inc"
+#endif
