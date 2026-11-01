@@ -156,6 +156,9 @@ void TASEngine::Start() {
                 m_PhysicsLevelBaseline = current;
                 Log::Info("Physics level baseline: time factor %g, next_movement_check %d, seed %d.",
                           current.timeFactor, current.nextMovementCheck, current.randomSeed);
+                if (current.hasGravity)
+                    Log::Info("Physics level baseline gravity: %.17g, %.17g, %.17g.",
+                              current.gravity[0], current.gravity[1], current.gravity[2]);
             }
             if (tasActive && preserveHistory) {
                 Log::Info("Preserving inherited physics level state: time factor %.9g, next_movement_check %d, seed %d.",
@@ -187,6 +190,9 @@ void TASEngine::Start() {
                 }
                 Log::Info("Restoring physics level baseline (was time factor %g, next_movement_check %d, seed %d).",
                           current.timeFactor, current.nextMovementCheck, current.randomSeed);
+                if (current.hasGravity)
+                    Log::Info("Restoring physics level gravity (was %.17g, %.17g, %.17g).",
+                              current.gravity[0], current.gravity[1], current.gravity[2]);
                 m_GameInterface->RestorePhysicsLevelBaseline(baseline);
             }
         }

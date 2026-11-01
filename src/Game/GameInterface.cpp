@@ -188,6 +188,12 @@ PhysicsDeterminism::PhysicsLevelBaseline GameInterface::CapturePhysicsLevelBasel
 #ifdef TAS_SOURCE_ENGINE
     baseline.timeFactor = m_IpionManager->GetPhysicsTimeFactor();
     baseline.nextMovementCheck = m_IpionManager->GetNextMovementCheck();
+    if (auto *env = m_IpionManager->GetEnvironment()) {
+        const auto *gravity = env->get_gravity();
+        for (int axis = 0; axis < 3; ++axis)
+            baseline.gravity[axis] = gravity->k[axis];
+        baseline.hasGravity = true;
+    }
 #else
     if (PhysicsRuntimeBridgeActive()) {
         PhysicsRuntimeLevelBaseline runtime = {};
@@ -293,6 +299,13 @@ void GameInterface::RestorePhysicsLevelBaseline(const PhysicsDeterminism::Physic
     m_IpionManager->SetPhysicsTimeFactor(baseline.timeFactor);
 #ifdef TAS_SOURCE_ENGINE
     m_IpionManager->SetNextMovementCheck(baseline.nextMovementCheck);
+    if (baseline.hasGravity) {
+        if (auto *env = m_IpionManager->GetEnvironment()) {
+            IVP_U_Point gravity(baseline.gravity[0], baseline.gravity[1], baseline.gravity[2]);
+            // Also update the gravity controller and scalar, not just the vector.
+            env->set_gravity(&gravity);
+        }
+    }
 #else
     if (auto *env = m_IpionManager->GetEnvironment())
         env->next_movement_check = baseline.nextMovementCheck;

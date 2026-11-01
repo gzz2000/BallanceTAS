@@ -18,13 +18,17 @@ namespace PhysicsDeterminism {
      * Physics state that survives leaving a level. The IVP environment is not
      * rebuilt between levels, so a later level load inherits the previous
      * level's time factor (the level script raises it from 1x to 2x during
-     * loading), freeze-check countdown and seed. That shifts the PSI phase and
-     * made re-entered levels replay one frame late.
+     * loading), gravity, freeze-check countdown and seed. These can change the
+     * pre-load simulation and downstream freeze/PSI phases on re-entry.
      */
     struct PhysicsLevelBaseline {
         float timeFactor = 0.0f;       // CKIpionManager::m_PhysicsTimeFactor
         short nextMovementCheck = 0;   // IVP_Environment::next_movement_check
         int32_t randomSeed = 0;        // IVP_RAND_SEED
+        // Source-runtime state only; the versioned retail bridge is unchanged.
+        // Preserve IVP doubles: passing through VxVector would round -9.81.
+        double gravity[3] = {};
+        bool hasGravity = false;
     };
 
     /// Hook CKIpionManager::PostProcess. Call once after MinHook is initialized.
